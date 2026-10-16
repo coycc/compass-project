@@ -1,0 +1,443 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>手機指南針與 MQTT 同步</title>
+
+  <!-- 載入 MQTT.js -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, "Microsoft JhengHei", sans-serif;
+      text-align: center;
+      background: #f3f5f8;
+      margin: 0;
+      padding: 24px 12px;
+      color: #222;
+    }
+
+    .panel {
+      background: white;
+      max-width: 420px;
+      margin: 20px auto;
+      padding: 24px 16px;
+      border-radius: 18px;
+      box-shadow: 0 3px 14px #0001;
+    }
+
+    #compass {
+      width: 240px;
+      height: 240px;
+      max-width: 75vw;
+      max-height: 75vw;
+      margin: 20px auto;
+      border: 4px solid #333;
+      border-radius: 50%;
+      position: relative;
+      background: white;
+      box-sizing: content-box;
+    }
+
+    .mark {
+      position: absolute;
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .north {
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #d33;
+    }
+
+    .south {
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .east {
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    .west {
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    /* 指南針指針 */
+    #needle {
+      position: absolute;
+      width: 8px;
+      height: 150px;
+      left: calc(50% - 4px);
+      top: calc(50% - 75px);
+      transform-origin: center center;
+      transition: transform 0.12s linear;
+    }
+
+    /* 紅色：指針前端 */
+    #needle::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-bottom: 75px solid #e53935;
+    }
+
+    /* 灰藍色：指針後端 */
+    #needle::after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-top: 75px solid #65758b;
+    }
+
+    /* 中間圓點 */
+    #hub {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      background: #222;
+      border-radius: 50%;
+      left: calc(50% - 8px);
+      top: calc(50% - 8px);
+    }
+
+    button {
+      font-size: 16px;
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 10px;
+      background: #1769aa;
+      color: white;
+      cursor: pointer;
+      margin: 6px;
+    }
+
+    button:disabled {
+      background: #888;
+      cursor: not-allowed;
+    }
+
+    #status {
+      color: #555;
+      overflow-wrap: anywhere;
+    }
+
+    #angle {
+      font-size: 28px;
+      font-weight: bold;
+    }
+
+    .hint {
+      font-size: 14px;
+      color: #666;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="panel">
+    <h1 id="title">手機指南針</h1>
+
+    <p id="status">準備連線中……</p>
+
+    <div id="compass">
+      <span class="mark north">N</span>
+      <span class="mark south">S</span>
+      <span class="mark east">E</span>
+      <span class="mark west">W</span>
+
+      <div id="needle"></div>
+      <div id="hub"></div>
+    </div>
+
+    <p>Yaw / 方向角</p>
+    <div id="angle">--°</div>
+
+    <p id="source" class="hint">等待方向資料</p>
+
+    <button id="startBtn">開始 / 允許感測器</button>
+  </div>
+
+  <script>
+    // ====================================
+    // 1. 基本設定
+    // ====================================
+
+    // 網址參數：
+    // ?mode=phone 是手機模式
+    // ?mode=pc    是電腦模式
+
+    const params = new URLSearchParams(location.search);
+    const mode = params.get("mode") || "phone";
+
+    // 我的學號
+    const studentId = "1411331040";
+
+    // MQTT Topic
+    const topic = `nutc/im/${studentId}/compass/yaw`;
+
+    // 老師指定的 MQTT Broker
+    const brokerUrl = "wss://broker.hivemq.com:8884/mqtt";
+
+    // 取得網頁元素
+    const statusEl = document.getElementById("status");
+    const angleEl = document.getElementById("angle");
+    const sourceEl = document.getElementById("source");
+    const needle = document.getElementById("needle");
+    const titleEl = document.getElementById("title");
+    const startBtn = document.getElementById("startBtn");
+
+    let client = null;
+    let sensorStarted = false;
+
+
+    // ====================================
+    // 2. 更新指南針
+    // ====================================
+
+    function updateCompass(angle, sourceName) {
+      if (!Number.isFinite(angle)) {
+        return;
+      }
+
+      // 將角度限制在 0～360 度
+      angle = ((angle % 360) + 360) % 360;
+
+      // 顯示角度
+      angleEl.textContent = angle.toFixed(1) + "°";
+
+      // 顯示資料來源
+      sourceEl.textContent = sourceName;
+
+      // 旋轉指針
+      needle.style.transform = `rotate(${angle}deg)`;
+    }
+
+
+    // ====================================
+    // 3. 連接 MQTT Broker
+    // ====================================
+
+    function connectMQTT() {
+      if (client) {
+        return;
+      }
+
+      // 確認 MQTT.js 是否成功載入
+      if (!window.mqtt) {
+        statusEl.textContent =
+          "MQTT 函式庫載入失敗，請檢查網路或重新整理網頁";
+        return;
+      }
+
+      statusEl.textContent = "正在連接 MQTT……";
+
+      client = mqtt.connect(brokerUrl, {
+        clientId:
+          "compass_" + Math.random().toString(16).slice(2, 10),
+
+        connectTimeout: 10000,
+        reconnectPeriod: 3000,
+        clean: true
+      });
+
+      // 連線成功
+      client.on("connect", () => {
+        if (mode === "pc") {
+          statusEl.textContent = "MQTT 已連線，正在訂閱資料……";
+
+          // 電腦訂閱手機的方向資料
+          client.subscribe(topic, (err) => {
+            if (err) {
+              statusEl.textContent =
+                "訂閱失敗：" + err.message;
+            } else {
+              statusEl.textContent =
+                "MQTT 已連線，等待手機方向資料";
+            }
+          });
+        } else {
+          statusEl.textContent =
+            "MQTT 已連線，請允許手機方向感測器";
+        }
+      });
+
+      // 重新連線
+      client.on("reconnect", () => {
+        statusEl.textContent = "MQTT 重新連線中……";
+      });
+
+      // 連線錯誤
+      client.on("error", (err) => {
+        statusEl.textContent =
+          "MQTT 連線錯誤：" + err.message;
+      });
+
+      // 電腦收到手機傳來的資料
+      client.on("message", (receivedTopic, payload) => {
+        if (receivedTopic !== topic) {
+          return;
+        }
+
+        const angle = Number(payload.toString());
+
+        if (Number.isFinite(angle)) {
+          updateCompass(angle, "資料來源：MQTT 手機");
+
+          statusEl.textContent = "已收到手機方向資料";
+        }
+      });
+    }
+
+
+    // ====================================
+    // 4. 啟動 iPhone 方向感測器
+    // ====================================
+
+    async function startSensor() {
+      if (mode !== "phone") {
+        return;
+      }
+
+      // 避免重複註冊感測器事件
+      if (sensorStarted) {
+        return;
+      }
+
+      // 必須使用 HTTPS 或安全來源
+      if (!window.isSecureContext) {
+        statusEl.textContent =
+          "請使用 HTTPS 網址開啟網頁";
+        return;
+      }
+
+      if (!("DeviceOrientationEvent" in window)) {
+        statusEl.textContent =
+          "此瀏覽器不支援方向感測器";
+        return;
+      }
+
+      try {
+        // iPhone Safari 需要透過按鈕點擊要求權限
+        if (
+          typeof DeviceOrientationEvent.requestPermission ===
+          "function"
+        ) {
+          const permission =
+            await DeviceOrientationEvent.requestPermission(true);
+
+          if (permission !== "granted") {
+            statusEl.textContent =
+              "感測器權限未獲允許，請重新嘗試";
+            return;
+          }
+        }
+
+        // 開始監聽方向變化
+        window.addEventListener(
+          "deviceorientation",
+          handleOrientation
+        );
+
+        sensorStarted = true;
+
+        startBtn.disabled = true;
+        startBtn.textContent = "感測器已啟動";
+
+        statusEl.textContent =
+          "感測器已啟動，請轉動手機";
+      } catch (err) {
+        statusEl.textContent =
+          "啟動感測器失敗：" + err.message;
+      }
+    }
+
+
+    // ====================================
+    // 5. 取得 yaw 並傳送到 MQTT
+    // ====================================
+
+    function handleOrientation(event) {
+      let yaw;
+      let sourceName;
+
+      // iPhone Safari 如果提供指南針角度，
+      // 優先使用相對於磁北的方向值
+      if (
+        Number.isFinite(event.webkitCompassHeading)
+      ) {
+        yaw = event.webkitCompassHeading;
+
+        sourceName = "來源：iPhone 指南針方向";
+      } else if (Number.isFinite(event.alpha)) {
+        // 備用值：alpha 是裝置旋轉角，
+        // 不一定代表真正相對磁北的方向
+        yaw = event.alpha;
+
+        sourceName = "來源：alpha 備用旋轉角";
+      } else {
+        statusEl.textContent =
+          "尚未取得有效方向資料，請檢查感測器";
+        return;
+      }
+
+      // 更新手機畫面
+      updateCompass(yaw, sourceName);
+
+      // 將方向角發布到 MQTT
+      if (client && client.connected) {
+        client.publish(
+          topic,
+          yaw.toFixed(1)
+        );
+      }
+    }
+
+
+    // ====================================
+    // 6. 設定手機模式或電腦模式
+    // ====================================
+
+    if (mode === "pc") {
+      // 電腦模式
+      titleEl.textContent = "電腦同步指南針";
+
+      startBtn.style.display = "none";
+
+      sourceEl.textContent = "等待 MQTT 訊息";
+
+      // 連線並訂閱手機方向
+      connectMQTT();
+
+    } else {
+      // 手機模式
+      titleEl.textContent = "手機指南針";
+
+      // 先連接 MQTT
+      connectMQTT();
+
+      // 按鈕觸發感測器權限
+      startBtn.addEventListener(
+        "click",
+        startSensor
+      );
+    }
+  </script>
+</body>
+</html>
