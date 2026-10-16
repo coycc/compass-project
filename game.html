@@ -4,114 +4,263 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MQTT 傾斜滾球遊戲</title>
+<title>滾球進圈圈得分遊戲</title>
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <style>
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; padding: 20px;
-    background: #142238; color: white;
-    font-family: Arial, sans-serif; text-align: center;
-  }
-  h1 { font-size: 25px; }
-  #status { color: #ffd166; margin: 12px; }
-  #track {
-    position: relative; overflow: hidden;
-    width: min(88vw, 340px); height: 440px;
-    margin: 20px auto;
-    border: 5px solid #dce6f1; border-radius: 28px;
-    background: linear-gradient(90deg,#315d45,#4c956c,#315d45);
-  }
-  #track::before {
-    content: ""; position: absolute;
-    left: 25%; top: 0; height: 100%; width: 50%;
-    border-left: 3px dashed #ffffff50;
-    border-right: 3px dashed #ffffff50;
-  }
-  #ball {
-    position: absolute; z-index: 2;
-    left: 50%; top: 50%;
-    width: 48px; height: 48px;
-    border-radius: 50%;
-    background: radial-gradient(circle at 30% 25%,#fff,#52b6ff 35%,#0754ba 80%);
-    box-shadow: 0 7px 12px #102b2b80;
-    transform: translate(-50%,-50%);
-  }
-  .labels {
-    position: absolute; left: 0; width: 100%;
-    font-weight: bold; color: #fff; text-shadow: 1px 2px 3px #123;
-  }
-  .back { top: 12px; }
-  .front { bottom: 12px; }
-  button {
-    padding: 13px 20px; margin: 5px;
-    border: 0; border-radius: 12px;
-    font-size: 16px; font-weight: bold;
-    cursor: pointer;
-  }
-  #start { background: #ffd166; color: #142238; }
-  #reset { background: white; color: #142238; }
-  #info { line-height: 1.8; color: #dbeafe; }
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+  font-family: Arial, sans-serif;
+  color: white;
+  background: linear-gradient(#1685dc, #092b50);
+}
+
+h1 { font-size: 25px; margin: 8px 0; }
+
+#status {
+  color: #ffe082;
+  margin: 12px;
+  font-size: 14px;
+}
+
+#scores {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+  margin: 12px;
+  font-size: 17px;
+}
+
+.score {
+  font-size: 28px;
+  font-weight: bold;
+  color: #ffe082;
+}
+
+#arena {
+  position: relative;
+  width: min(90vw, 390px);
+  height: min(65vh, 510px);
+  min-height: 350px;
+  margin: 16px auto;
+  overflow: hidden;
+  border: 6px solid #c5d6e7;
+  border-radius: 24px;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      #54c889 0px,
+      #54c889 65px,
+      #46b879 65px,
+      #46b879 130px
+    );
+  box-shadow: 0 10px 25px #00182d70;
+}
+
+#arena::before {
+  content: "";
+  position: absolute;
+  left: 8%;
+  top: 0;
+  height: 100%;
+  width: 84%;
+  border-left: 5px solid #b9d0e4;
+  border-right: 5px solid #b9d0e4;
+  pointer-events: none;
+}
+
+.label {
+  position: absolute;
+  z-index: 1;
+  color: white;
+  font-size: 13px;
+  font-weight: bold;
+  text-shadow: 0 1px 4px #234;
+}
+
+.top { top: 8px; left: 50%; transform: translateX(-50%); }
+.bottom { bottom: 8px; left: 50%; transform: translateX(-50%); }
+.left { left: 10px; top: 50%; transform: translateY(-50%); }
+.right { right: 10px; top: 50%; transform: translateY(-50%); }
+
+#target {
+  position: absolute;
+  z-index: 2;
+  width: 76px;
+  height: 76px;
+  border: 9px solid #ffcf33;
+  border-radius: 50%;
+  background: #ffed8930;
+  box-shadow:
+    0 0 0 3px #fff4b5,
+    0 0 18px #ffcf33a0,
+    inset 0 0 10px #ffcf3370;
+  transform: translate(-50%, -50%);
+}
+
+#ball {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 83%;
+  width: 43px;
+  height: 43px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 30% 25%,
+    #ffffff,
+    #55c8ff 30%,
+    #0783ee 62%,
+    #064ba7
+  );
+  box-shadow: 0 5px 10px #003d4060;
+  transform: translate(-50%, -50%);
+}
+
+#message {
+  min-height: 28px;
+  color: #ffe082;
+  font-weight: bold;
+  font-size: 18px;
+}
+
+button {
+  padding: 12px 17px;
+  margin: 5px;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+#start { background: #ffcf33; color: #17324d; }
+#reset { background: white; color: #17324d; }
+
+.note {
+  color: #d9ecff;
+  font-size: 13px;
+  line-height: 1.8;
+}
 </style>
 </head>
-<body>
-<h1>🎮 傾斜滾球遊戲</h1>
-<div id="status">準備連線……</div>
 
-<div id="track">
-  <div class="labels back">後方 ↑</div>
-  <div class="labels front">↓ 前方</div>
+<body>
+<h1>🎯 滾球進圈圈</h1>
+<div id="status">正在連接 MQTT……</div>
+
+<div id="scores">
+  <div>目前分數<br><span class="score" id="score">0</span></div>
+  <div>最高分<br><span class="score" id="best">0</span></div>
+</div>
+
+<div id="arena">
+  <span class="label top">前方</span>
+  <span class="label bottom">後方</span>
+  <span class="label left">左</span>
+  <span class="label right">右</span>
+  <div id="target"></div>
   <div id="ball"></div>
 </div>
 
-<div id="info">
-  <div>傾斜角度：<span id="angle">0</span>°</div>
-  <div>球的位置：<span id="pos">50</span>%</div>
-  <div id="mode"></div>
-</div>
+<div id="message">把球滾進金色圈圈即可得分！</div>
+<p class="note">
+  往前傾：球往前｜往後仰：球往後<br>
+  往左傾：球往左｜往右傾：球往右
+</p>
 
 <button id="start">開始／允許感測器</button>
-<button id="reset">球回到中央</button>
+<button id="reset">重新開始</button>
 
 <script>
 (() => {
   const topic = "nutc/im/1411331040/game/ball";
-  const params = new URLSearchParams(location.search);
-  const mode = params.get("mode") === "pc" ? "pc" : "phone";
+  const mode = new URLSearchParams(location.search).get("mode") === "pc"
+    ? "pc" : "phone";
+
+  const arena = document.getElementById("arena");
   const ball = document.getElementById("ball");
+  const target = document.getElementById("target");
   const status = document.getElementById("status");
-  const angleText = document.getElementById("angle");
-  const posText = document.getElementById("pos");
-  document.getElementById("mode").textContent =
-    mode === "phone" ? "目前模式：手機控制" : "目前模式：PC 同步顯示";
+  const scoreEl = document.getElementById("score");
+  const bestEl = document.getElementById("best");
+  const message = document.getElementById("message");
 
-  let client = null;
-  let position = 50;
-  let velocity = 0;
-  let lastTime = 0;
-  let lastSend = 0;
-  let baseline = null;
-  let currentBeta = null;
-  let tilt = 0;
+  let client;
+  let x = 50, y = 83;
+  let tx = 50, ty = 18;
+  let vx = 0, vy = 0;
+  let pitch = 0, roll = 0;
+  let baseBeta = null, baseGamma = null;
   let started = false;
+  let score = 0, best = 0;
+  let lastTime = 0, lastSend = 0;
+  let lastGoal = 0;
+  let goalFlashUntil = 0;
 
-  function draw(p) {
-    position = Math.max(4, Math.min(96, p));
-    ball.style.top = position + "%";
-    posText.textContent = position.toFixed(1);
+  document.getElementById("start").style.display =
+    mode === "pc" ? "none" : "inline-block";
+
+  function draw() {
+    ball.style.left = x + "%";
+    ball.style.top = y + "%";
+    target.style.left = tx + "%";
+    target.style.top = ty + "%";
   }
 
-  function connectMQTT() {
-    status.textContent = "正在連接 MQTT……";
+  function updateScore() {
+    scoreEl.textContent = score;
+    bestEl.textContent = best;
+  }
+
+  function randomTarget() {
+    // 讓圈圈出現在球場中央範圍內，避免貼邊
+    tx = 22 + Math.random() * 56;
+    ty = 16 + Math.random() * 65;
+    draw();
+  }
+
+  function resetGame(send = true) {
+    x = 50; y = 83;
+    vx = 0; vy = 0;
+    score = 0;
+    lastGoal = 0;
+    randomTarget();
+    updateScore();
+    message.textContent = "把球滾進金色圈圈即可得分！";
+    draw();
+
+    if (send && mode === "phone" && client?.connected) {
+      publishState();
+    }
+  }
+
+  function publishState() {
+    if (!client?.connected) return;
+    client.publish(topic, JSON.stringify({
+      x, y, tx, ty, score, best,
+      p: pitch, r: roll,
+      reset: false,
+      time: Date.now()
+    }));
+  }
+
+  function connect() {
     client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt");
 
     client.on("connect", () => {
       status.textContent = "MQTT 已連線 ✓";
       if (mode === "pc") {
         client.subscribe(topic, err => {
-          if (err) status.textContent = "訂閱失敗";
-          else status.textContent = "PC 已連線，等待手機控制球……";
+          status.textContent = err
+            ? "訂閱失敗"
+            : "PC 已連線，等待手機遊戲同步……";
         });
+      } else {
+        status.textContent = "手機已連線，可以開始遊戲";
       }
     });
 
@@ -120,99 +269,153 @@
     });
 
     client.on("offline", () => {
-      status.textContent = "MQTT 離線，正在重新連線……";
+      status.textContent = "MQTT 離線，重新連線中……";
     });
 
-    client.on("message", (receivedTopic, message) => {
+    client.on("message", (receivedTopic, raw) => {
       if (mode !== "pc" || receivedTopic !== topic) return;
+
       try {
-        const data = JSON.parse(message.toString());
-        if (typeof data.p === "number") draw(data.p);
-        if (typeof data.a === "number")
-          angleText.textContent = data.a.toFixed(1);
+        const d = JSON.parse(raw.toString());
+
+        if (Number.isFinite(d.x)) x = d.x;
+        if (Number.isFinite(d.y)) y = d.y;
+        if (Number.isFinite(d.tx)) tx = d.tx;
+        if (Number.isFinite(d.ty)) ty = d.ty;
+
+        if (Number.isFinite(d.score)) score = d.score;
+        if (Number.isFinite(d.best)) best = d.best;
+
+        scoreEl.textContent = score;
+        bestEl.textContent = best;
+        draw();
+
+        if (d.reset) message.textContent = "遊戲已重新開始！";
+        else if (score > 0) message.textContent = "繼續挑戰下一個圈圈！";
+        else message.textContent = "等待手機控制球……";
       } catch (e) {}
     });
   }
 
-  function handleOrientation(event) {
-    if (mode !== "phone" || !started || event.beta == null) return;
+  function orientationHandler(e) {
+    if (!started || mode !== "phone") return;
+    if (e.beta == null || e.gamma == null) return;
 
-    currentBeta = event.beta;
-    if (baseline === null) baseline = currentBeta;
+    if (baseBeta === null) {
+      baseBeta = e.beta;
+      baseGamma = e.gamma;
+    }
 
-    // 相對於開始時的角度，避免手機原本的角度影響遊戲
-    let delta = currentBeta - baseline;
-
-    // 限制角度，減少突然大幅傾斜造成的跳動
-    tilt = Math.max(-35, Math.min(35, delta));
-    angleText.textContent = tilt.toFixed(1);
+    pitch = Math.max(-35, Math.min(35, e.beta - baseBeta));
+    roll = Math.max(-35, Math.min(35, e.gamma - baseGamma));
   }
 
-  function frame(time) {
-    requestAnimationFrame(frame);
+  function checkGoal(time) {
+    const dx = x - tx;
+    const dy = y - ty;
+
+    // 球接近圈圈中心就得分，避免球必須像素級精準
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < 9 && time - lastGoal > 1000) {
+      lastGoal = time;
+      score += 1;
+      best = Math.max(best, score);
+      updateScore();
+
+      message.textContent = "🎉 得分！ +1";
+      goalFlashUntil = time + 650;
+
+      // 球留在附近短暫顯示得分，再把圈圈移到新位置
+      randomTarget();
+
+      if (client?.connected) publishState();
+    }
+  }
+
+  function animate(time) {
+    requestAnimationFrame(animate);
 
     if (mode !== "phone" || !started) return;
 
-    const dt = lastTime ? Math.min((time - lastTime) / 1000, 0.05) : 0;
+    const dt = lastTime
+      ? Math.min((time - lastTime) / 1000, 0.05)
+      : 0;
     lastTime = time;
 
-    // 往前傾時 delta 增加，球往前；往後仰則球往後
-    velocity += tilt * 1.5 * dt;
-    velocity *= Math.pow(0.985, dt * 60);
-    draw(position + velocity * dt);
+    // 傾斜角度控制球的兩個方向
+    vx += roll * 2.0 * dt;
+    vy += pitch * 2.0 * dt;
 
-    // 到達邊界時停止繼續加速
-    if (position <= 4 || position >= 96) velocity = 0;
+    const friction = Math.pow(0.90, dt * 10);
+    vx *= friction;
+    vy *= friction;
 
-    // 每約 50 毫秒傳一次球的位置給 PC
-    if (client && client.connected && time - lastSend > 50) {
+    x += vx * dt;
+    y += vy * dt;
+
+    // 場地邊界
+    if (x < 12) { x = 12; vx = 0; }
+    if (x > 88) { x = 88; vx = 0; }
+    if (y < 6) { y = 6; vy = 0; }
+    if (y > 94) { y = 94; vy = 0; }
+
+    checkGoal(time);
+    draw();
+
+    if (time - goalFlashUntil > 0 && time - goalFlashUntil < 80) {
+      // 得分文字由下一次狀態更新取代
+    }
+
+    if (client?.connected && time - lastSend > 50) {
       lastSend = time;
-      client.publish(topic, JSON.stringify({
-        p: position,
-        a: tilt
-      }));
+      publishState();
     }
   }
 
   document.getElementById("start").addEventListener("click", async () => {
-    if (mode !== "phone") {
-      status.textContent = "請在手機網址使用手機控制模式";
-      return;
-    }
+    if (mode !== "phone") return;
 
-    if (typeof DeviceOrientationEvent === "undefined") {
+    if (!("DeviceOrientationEvent" in window)) {
       status.textContent = "此裝置不支援方向感測器";
       return;
     }
 
     try {
       if (typeof DeviceOrientationEvent.requestPermission === "function") {
-        const result = await DeviceOrientationEvent.requestPermission();
-        if (result !== "granted") {
-          status.textContent = "感測器權限未允許，請檢查 Safari 設定";
+        const permission = await DeviceOrientationEvent.requestPermission();
+        if (permission !== "granted") {
+          status.textContent = "感測器未獲允許，請檢查 Safari 設定";
           return;
         }
       }
 
-      baseline = null;
+      baseBeta = null;
+      baseGamma = null;
       started = true;
-      window.addEventListener("deviceorientation", handleOrientation);
-      status.textContent = "感測器已啟動！保持手機穩定，開始傾斜";
-    } catch (error) {
-      status.textContent = "無法啟動感測器：" + error.message;
+      window.addEventListener("deviceorientation", orientationHandler);
+      status.textContent = "感測器已啟動！傾斜手機控制球";
+      message.textContent = "開始！把球滾進金色圈圈！";
+    } catch (err) {
+      status.textContent = "啟動失敗：" + err.message;
     }
   });
 
   document.getElementById("reset").addEventListener("click", () => {
-    draw(50);
-    velocity = 0;
-    if (mode === "phone" && client && client.connected) {
-      client.publish(topic, JSON.stringify({p: 50, a: 0}));
+    resetGame();
+
+    if (mode === "phone" && client?.connected) {
+      client.publish(topic, JSON.stringify({
+        x, y, tx, ty, score, best,
+        p: 0, r: 0, reset: true, time: Date.now()
+      }));
     }
   });
 
-  connectMQTT();
-  requestAnimationFrame(frame);
+  connect();
+  draw();
+  updateScore();
+  requestAnimationFrame(animate);
 })();
 </script>
 </body>
