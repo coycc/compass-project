@@ -1,0 +1,219 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MQTT 傾斜滾球遊戲</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    background: #142238; color: white;
+    font-family: Arial, sans-serif; text-align: center;
+  }
+  h1 { font-size: 25px; }
+  #status { color: #ffd166; margin: 12px; }
+  #track {
+    position: relative; overflow: hidden;
+    width: min(88vw, 340px); height: 440px;
+    margin: 20px auto;
+    border: 5px solid #dce6f1; border-radius: 28px;
+    background: linear-gradient(90deg,#315d45,#4c956c,#315d45);
+  }
+  #track::before {
+    content: ""; position: absolute;
+    left: 25%; top: 0; height: 100%; width: 50%;
+    border-left: 3px dashed #ffffff50;
+    border-right: 3px dashed #ffffff50;
+  }
+  #ball {
+    position: absolute; z-index: 2;
+    left: 50%; top: 50%;
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 25%,#fff,#52b6ff 35%,#0754ba 80%);
+    box-shadow: 0 7px 12px #102b2b80;
+    transform: translate(-50%,-50%);
+  }
+  .labels {
+    position: absolute; left: 0; width: 100%;
+    font-weight: bold; color: #fff; text-shadow: 1px 2px 3px #123;
+  }
+  .back { top: 12px; }
+  .front { bottom: 12px; }
+  button {
+    padding: 13px 20px; margin: 5px;
+    border: 0; border-radius: 12px;
+    font-size: 16px; font-weight: bold;
+    cursor: pointer;
+  }
+  #start { background: #ffd166; color: #142238; }
+  #reset { background: white; color: #142238; }
+  #info { line-height: 1.8; color: #dbeafe; }
+</style>
+</head>
+<body>
+<h1>🎮 傾斜滾球遊戲</h1>
+<div id="status">準備連線……</div>
+
+<div id="track">
+  <div class="labels back">後方 ↑</div>
+  <div class="labels front">↓ 前方</div>
+  <div id="ball"></div>
+</div>
+
+<div id="info">
+  <div>傾斜角度：<span id="angle">0</span>°</div>
+  <div>球的位置：<span id="pos">50</span>%</div>
+  <div id="mode"></div>
+</div>
+
+<button id="start">開始／允許感測器</button>
+<button id="reset">球回到中央</button>
+
+<script>
+(() => {
+  const topic = "nutc/im/1411331040/game/ball";
+  const params = new URLSearchParams(location.search);
+  const mode = params.get("mode") === "pc" ? "pc" : "phone";
+  const ball = document.getElementById("ball");
+  const status = document.getElementById("status");
+  const angleText = document.getElementById("angle");
+  const posText = document.getElementById("pos");
+  document.getElementById("mode").textContent =
+    mode === "phone" ? "目前模式：手機控制" : "目前模式：PC 同步顯示";
+
+  let client = null;
+  let position = 50;
+  let velocity = 0;
+  let lastTime = 0;
+  let lastSend = 0;
+  let baseline = null;
+  let currentBeta = null;
+  let tilt = 0;
+  let started = false;
+
+  function draw(p) {
+    position = Math.max(4, Math.min(96, p));
+    ball.style.top = position + "%";
+    posText.textContent = position.toFixed(1);
+  }
+
+  function connectMQTT() {
+    status.textContent = "正在連接 MQTT……";
+    client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt");
+
+    client.on("connect", () => {
+      status.textContent = "MQTT 已連線 ✓";
+      if (mode === "pc") {
+        client.subscribe(topic, err => {
+          if (err) status.textContent = "訂閱失敗";
+          else status.textContent = "PC 已連線，等待手機控制球……";
+        });
+      }
+    });
+
+    client.on("error", () => {
+      status.textContent = "MQTT 連線錯誤，請檢查網路";
+    });
+
+    client.on("offline", () => {
+      status.textContent = "MQTT 離線，正在重新連線……";
+    });
+
+    client.on("message", (receivedTopic, message) => {
+      if (mode !== "pc" || receivedTopic !== topic) return;
+      try {
+        const data = JSON.parse(message.toString());
+        if (typeof data.p === "number") draw(data.p);
+        if (typeof data.a === "number")
+          angleText.textContent = data.a.toFixed(1);
+      } catch (e) {}
+    });
+  }
+
+  function handleOrientation(event) {
+    if (mode !== "phone" || !started || event.beta == null) return;
+
+    currentBeta = event.beta;
+    if (baseline === null) baseline = currentBeta;
+
+    // 相對於開始時的角度，避免手機原本的角度影響遊戲
+    let delta = currentBeta - baseline;
+
+    // 限制角度，減少突然大幅傾斜造成的跳動
+    tilt = Math.max(-35, Math.min(35, delta));
+    angleText.textContent = tilt.toFixed(1);
+  }
+
+  function frame(time) {
+    requestAnimationFrame(frame);
+
+    if (mode !== "phone" || !started) return;
+
+    const dt = lastTime ? Math.min((time - lastTime) / 1000, 0.05) : 0;
+    lastTime = time;
+
+    // 往前傾時 delta 增加，球往前；往後仰則球往後
+    velocity += tilt * 1.5 * dt;
+    velocity *= Math.pow(0.985, dt * 60);
+    draw(position + velocity * dt);
+
+    // 到達邊界時停止繼續加速
+    if (position <= 4 || position >= 96) velocity = 0;
+
+    // 每約 50 毫秒傳一次球的位置給 PC
+    if (client && client.connected && time - lastSend > 50) {
+      lastSend = time;
+      client.publish(topic, JSON.stringify({
+        p: position,
+        a: tilt
+      }));
+    }
+  }
+
+  document.getElementById("start").addEventListener("click", async () => {
+    if (mode !== "phone") {
+      status.textContent = "請在手機網址使用手機控制模式";
+      return;
+    }
+
+    if (typeof DeviceOrientationEvent === "undefined") {
+      status.textContent = "此裝置不支援方向感測器";
+      return;
+    }
+
+    try {
+      if (typeof DeviceOrientationEvent.requestPermission === "function") {
+        const result = await DeviceOrientationEvent.requestPermission();
+        if (result !== "granted") {
+          status.textContent = "感測器權限未允許，請檢查 Safari 設定";
+          return;
+        }
+      }
+
+      baseline = null;
+      started = true;
+      window.addEventListener("deviceorientation", handleOrientation);
+      status.textContent = "感測器已啟動！保持手機穩定，開始傾斜";
+    } catch (error) {
+      status.textContent = "無法啟動感測器：" + error.message;
+    }
+  });
+
+  document.getElementById("reset").addEventListener("click", () => {
+    draw(50);
+    velocity = 0;
+    if (mode === "phone" && client && client.connected) {
+      client.publish(topic, JSON.stringify({p: 50, a: 0}));
+    }
+  });
+
+  connectMQTT();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
