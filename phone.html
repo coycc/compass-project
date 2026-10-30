@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手機加速度感測器</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #eef3f8;
+  text-align: center;
+  padding: 20px;
+}
+.card {
+  background: white;
+  padding: 20px;
+  margin: 15px auto;
+  max-width: 400px;
+  border-radius: 15px;
+  box-shadow: 0 2px 10px #ccc;
+}
+h1 { color: #245b91; }
+.data {
+  font-size: 25px;
+  margin: 15px;
+  font-weight: bold;
+}
+button {
+  padding: 14px 25px;
+  border: none;
+  border-radius: 10px;
+  background: #168cdb;
+  color: white;
+  font-size: 18px;
+  margin: 8px;
+}
+</style>
+</head>
+<body>
+
+<h1>手機三軸加速度感測器</h1>
+
+<div class="card">
+  <p id="status">尚未啟動</p>
+  <div class="data">X：<span id="x">0</span></div>
+  <div class="data">Y：<span id="y">0</span></div>
+  <div class="data">Z：<span id="z">0</span></div>
+  <hr>
+  <div class="data">
+    合成加速度：<span id="total">0</span>
+  </div>
+  <button onclick="startSensor()">開始感測</button>
+  <button onclick="stopSensor()">停止</button>
+</div>
+
+<div class="card">
+  <p>MQTT：<span id="mqttStatus">連線中...</span></p>
+  <p>發布間隔：100 ms</p>
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<script>
+const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+const TOPIC = "classroom/accelerometer/phone01";
+
+let client;
+let timer = null;
+let latestData = null;
+
+function connectMQTT() {
+  if (client && client.connected) return;
+
+  client = mqtt.connect(BROKER, {
+    clientId: "phone_" + Math.random().toString(16).slice(2, 10),
+    clean: true,
+    reconnectPeriod: 3000
+  });
+
+  client.on("connect", () => {
+    document.getElementById("mqttStatus").innerText = "已連線";
+  });
+
+  client.on("reconnect", () => {
+    document.getElementById("mqttStatus").innerText = "重新連線中";
+  });
+
+  client.on("error", (err) => {
+    document.getElementById("mqttStatus").innerText = "連線錯誤";
+    console.error(err);
+  });
+
+  client.on("close", () => {
+    document.getElementById("mqttStatus").innerText = "連線中斷";
+  });
+}
+
+function readSensor(event) {
+  const a = event.accelerationIncludingGravity || event.acceleration;
+
+  if (!a) return;
+
+  const x = a.x ?? 0;
+  const y = a.y ?? 0;
+  const z = a.z ?? 0;
+
+  const total = Math.sqrt(x*x + y*y + z*z);
+
+  document.getElementById("x").innerText = x.toFixed(2);
+  document.getElementById("y").innerText = y.toFixed(2);
+  document.getElementById("z").innerText = z.toFixed(2);
+  document.getElementById("total").innerText = total.toFixed(2);
+
+  latestData = {
+    x, y, z, total,
+    timestamp: Date.now(),
+    unit: "m/s^2"
+  };
+}
+
+async function startSensor() {
+  if (!window.isSecureContext) {
+    alert("請使用 HTTPS 網址開啟網頁！");
+    return;
+  }
+
+  try {
+    if (typeof DeviceMotionEvent === "undefined") {
+      alert("此裝置不支援加速度感測器");
+      return;
+    }
+
+    if (typeof DeviceMotionEvent.requestPermission === "function") {
+      const permission = await DeviceMotionEvent.requestPermission();
+
+      if (permission !== "granted") {
+        alert("請允許動作與方向感測器權限");
+        return;
+      }
+    }
+
+    window.removeEventListener("devicemotion", readSensor);
+    window.addEventListener("devicemotion", readSensor);
+
+    connectMQTT();
+
+    if (timer) clearInterval(timer);
+
+    timer = setInterval(() => {
+      if (latestData && client && client.connected) {
+        client.publish(TOPIC, JSON.stringify(latestData));
+      }
+    }, 100);
+
+    document.getElementById("status").innerText = "感測器啟動中";
+
+  } catch (error) {
+    alert("啟動失敗：" + error.message);
+  }
+}
+
+function stopSensor() {
+  window.removeEventListener("devicemotion", readSensor);
+
+  if (timer) clearInterval(timer);
+  timer = null;
+
+  document.getElementById("status").innerText = "已停止";
+}
+</script>
+
+</body>
+</html>
