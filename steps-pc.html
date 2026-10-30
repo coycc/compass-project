@@ -1,151 +1,176 @@
+
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>手機步數即時監控</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>加速度與計步即時監控</title>
 
-<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-<style>
-* { box-sizing: border-box; }
+  <style>
+    * { box-sizing: border-box; }
 
-body {
-  margin: 0;
-  padding: 25px;
-  font-family: Arial, "Noto Sans TC", sans-serif;
-  background: #101827;
-  color: white;
-}
+    body {
+      margin: 0;
+      padding: 25px;
+      font-family: Arial, "Noto Sans TC", sans-serif;
+      background: #101827;
+      color: white;
+    }
 
-.container {
-  max-width: 950px;
-  margin: auto;
-}
+    .container {
+      max-width: 1100px;
+      margin: auto;
+    }
 
-h1 {
-  text-align: center;
-  margin-bottom: 25px;
-}
+    h1 {
+      text-align: center;
+      margin-bottom: 25px;
+    }
 
-.card {
-  background: #1d2a40;
-  border-radius: 16px;
-  padding: 22px;
-  margin-bottom: 18px;
-}
+    .card {
+      background: #1d2a40;
+      border-radius: 16px;
+      padding: 22px;
+      margin-bottom: 18px;
+    }
 
-.status {
-  padding: 13px;
-  border-radius: 9px;
-  background: #34445e;
-  text-align: center;
-}
+    .status {
+      padding: 13px;
+      border-radius: 9px;
+      background: #34445e;
+      text-align: center;
+    }
 
-.steps {
-  font-size: 90px;
-  font-weight: bold;
-  text-align: center;
-  color: #43e0a1;
-  margin: 10px 0;
-}
+    .steps {
+      font-size: 90px;
+      font-weight: bold;
+      text-align: center;
+      color: #43e0a1;
+      margin: 10px 0;
+    }
 
-.subtitle {
-  text-align: center;
-  color: #c3cee0;
-}
+    .subtitle {
+      text-align: center;
+      color: #c3cee0;
+    }
 
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-top: 15px;
-}
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 15px;
+    }
 
-.info-box {
-  background: #293b58;
-  padding: 15px;
-  border-radius: 10px;
-}
+    .info-box {
+      background: #293b58;
+      padding: 15px;
+      border-radius: 10px;
+      min-width: 0;
+    }
 
-.info-label {
-  color: #b6c4da;
-  font-size: 14px;
-}
+    .info-label {
+      color: #b6c4da;
+      font-size: 14px;
+    }
 
-.info-value {
-  font-size: 18px;
-  font-weight: bold;
-  margin-top: 9px;
-  overflow-wrap: anywhere;
-}
+    .info-value {
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 9px;
+      overflow-wrap: anywhere;
+    }
 
-.accel-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
+    .accel-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
 
-.accel-box {
-  background: #293b58;
-  border-radius: 10px;
-  padding: 18px;
-  text-align: center;
-}
+    .accel-box {
+      background: #293b58;
+      border-radius: 10px;
+      padding: 18px;
+      text-align: center;
+    }
 
-.accel-value {
-  display: block;
-  margin-top: 10px;
-  font-size: 30px;
-  color: #73c7ff;
-  font-weight: bold;
-}
+    .accel-value {
+      display: block;
+      margin-top: 10px;
+      font-size: 30px;
+      color: #73c7ff;
+      font-weight: bold;
+    }
 
-.small {
-  font-size: 13px;
-  color: #b6c4da;
-  line-height: 1.6;
-}
+    .total-value {
+      color: #43e0a1;
+      font-weight: bold;
+      font-size: 22px;
+    }
 
-@media (max-width: 600px) {
-  body { padding: 12px; }
-  .info-grid { grid-template-columns: 1fr; }
-  .steps { font-size: 70px; }
-  .accel-value { font-size: 21px; }
-}
-</style>
+    .chart-container {
+      position: relative;
+      width: 100%;
+      height: 380px;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #b6c4da;
+      line-height: 1.6;
+    }
+
+    @media (max-width: 600px) {
+      body { padding: 12px; }
+
+      .info-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .steps { font-size: 70px; }
+
+      .accel-value { font-size: 21px; }
+
+      .chart-container { height: 300px; }
+    }
+  </style>
 </head>
 
 <body>
-
 <div class="container">
 
-  <h1>📊 手機步數即時監控</h1>
+  <h1>📊 手機加速度與計步即時監控</h1>
 
+  <!-- MQTT 狀態 -->
   <div class="card">
-    <div class="status" id="mqttStatus">
-      MQTT 連線中...
-    </div>
+    <div class="status" id="mqttStatus">MQTT 連線中...</div>
 
     <p class="small">
-      步數主題：nutc/im/1411331040/steps
+      步數 Topic：nutc/im/1411331040/steps
     </p>
 
     <p class="small">
-      加速度主題：classroom/accelerometer/phone01
+      加速度 Topic：classroom/accelerometer/phone01
     </p>
   </div>
 
+  <!-- 步數 -->
   <div class="card">
     <h2>🚶 手機累計步數</h2>
+
     <div class="steps" id="steps">0</div>
+
     <div class="subtitle">目前累計步數</div>
   </div>
 
+  <!-- 步數訊息 -->
   <div class="card">
     <h2>📋 步數訊息</h2>
 
     <div class="info-grid">
+
       <div class="info-box">
         <div class="info-label">裝置 ID</div>
         <div class="info-value" id="deviceId">尚未收到</div>
@@ -160,15 +185,18 @@ h1 {
         <div class="info-label">最後更新時間</div>
         <div class="info-value" id="stepTime">尚未收到</div>
       </div>
+
     </div>
 
     <p class="small" id="stepStatus">等待步數資料...</p>
   </div>
 
+  <!-- 即時加速度數值 -->
   <div class="card">
     <h2>📱 手機線性加速度</h2>
 
     <div class="accel-grid">
+
       <div class="accel-box">
         X 軸
         <span class="accel-value" id="ax">0.00</span>
@@ -183,11 +211,13 @@ h1 {
         Z 軸
         <span class="accel-value" id="az">0.00</span>
       </div>
+
     </div>
 
     <p class="subtitle">
       加速度大小：
-      <span id="total">0.00</span> m/s²
+      <span class="total-value" id="total">0.00</span>
+      m/s²
     </p>
 
     <p class="small" id="accelStatus">
@@ -200,11 +230,26 @@ h1 {
     </p>
   </div>
 
+  <!-- 加速度即時圖表 -->
+  <div class="card">
+    <h2>📈 即時加速度折線圖</h2>
+
+    <p class="small">
+      顯示最近 100 筆資料，包含 X、Y、Z 與總加速度。
+    </p>
+
+    <div class="chart-container">
+      <canvas id="accelChart"></canvas>
+    </div>
+
+    <p class="small" id="chartStatus">等待加速度資料...</p>
+  </div>
+
 </div>
 
 <script>
 // =====================================
-// MQTT 設定
+// 1. MQTT 設定
 // =====================================
 
 const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
@@ -225,7 +270,7 @@ function setStatus(message, color) {
 }
 
 // =====================================
-// 時間格式處理
+// 2. 時間格式
 // =====================================
 
 function formatTime(timestamp) {
@@ -233,14 +278,7 @@ function formatTime(timestamp) {
     return "--";
   }
 
-  let date;
-
-  // 支援 ISO 時間和毫秒時間戳
-  if (typeof timestamp === "number") {
-    date = new Date(timestamp);
-  } else {
-    date = new Date(timestamp);
-  }
+  const date = new Date(timestamp);
 
   if (Number.isNaN(date.getTime())) {
     return "--";
@@ -251,11 +289,253 @@ function formatTime(timestamp) {
   });
 }
 
+function formatChartTime(timestamp) {
+  const date = timestamp ? new Date(timestamp) : new Date();
+
+  if (Number.isNaN(date.getTime())) {
+    return new Date().toLocaleTimeString("zh-TW");
+  }
+
+  return date.toLocaleTimeString("zh-TW", {
+    hour12: false
+  });
+}
+
 // =====================================
-// MQTT 連線
+// 3. 建立 Chart.js 圖表
+// =====================================
+
+const chartCanvas = document.getElementById("accelChart");
+
+const accelChart = new Chart(chartCanvas, {
+  type: "line",
+
+  data: {
+    labels: [],
+
+    datasets: [
+      {
+        label: "X 軸",
+        data: [],
+        borderColor: "#ff6384",
+        backgroundColor: "transparent",
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.2
+      },
+
+      {
+        label: "Y 軸",
+        data: [],
+        borderColor: "#36a2eb",
+        backgroundColor: "transparent",
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.2
+      },
+
+      {
+        label: "Z 軸",
+        data: [],
+        borderColor: "#4bc0c0",
+        backgroundColor: "transparent",
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.2
+      },
+
+      {
+        label: "總加速度",
+        data: [],
+        borderColor: "#ffcd56",
+        backgroundColor: "transparent",
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.2
+      }
+    ]
+  },
+
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+
+    interaction: {
+      intersect: false,
+      mode: "index"
+    },
+
+    plugins: {
+      legend: {
+        labels: {
+          color: "#ffffff"
+        }
+      },
+
+      title: {
+        display: true,
+        text: "手機三軸與總加速度",
+        color: "#ffffff"
+      }
+    },
+
+    scales: {
+      x: {
+        ticks: {
+          color: "#c3cee0",
+          maxTicksLimit: 10
+        },
+
+        grid: {
+          color: "rgba(255,255,255,0.1)"
+        }
+      },
+
+      y: {
+        title: {
+          display: true,
+          text: "加速度 (m/s²)",
+          color: "#ffffff"
+        },
+
+        ticks: {
+          color: "#c3cee0"
+        },
+
+        grid: {
+          color: "rgba(255,255,255,0.1)"
+        }
+      }
+    }
+  }
+});
+
+// 加入新的圖表資料
+function addChartData(x, y, z, total, timestamp) {
+  const label = formatChartTime(timestamp);
+
+  accelChart.data.labels.push(label);
+
+  accelChart.data.datasets[0].data.push(x);
+  accelChart.data.datasets[1].data.push(y);
+  accelChart.data.datasets[2].data.push(z);
+  accelChart.data.datasets[3].data.push(total);
+
+  // 只保留最近 100 筆
+  const MAX_POINTS = 100;
+
+  if (accelChart.data.labels.length > MAX_POINTS) {
+    accelChart.data.labels.shift();
+
+    accelChart.data.datasets.forEach(dataset => {
+      dataset.data.shift();
+    });
+  }
+
+  accelChart.update("none");
+
+  document.getElementById("chartStatus").textContent =
+    "✅ 圖表更新中，目前顯示 " +
+    accelChart.data.labels.length +
+    " 筆資料";
+}
+
+// =====================================
+// 4. 接收步數資料
+// =====================================
+
+function handleStepData(data) {
+  const receivedSteps = Number(data.steps);
+
+  if (
+    data.steps === null ||
+    data.steps === undefined ||
+    !Number.isFinite(receivedSteps) ||
+    receivedSteps < 0
+  ) {
+    console.warn("步數資料不正確：", data);
+    return;
+  }
+
+  document.getElementById("steps").textContent =
+    Math.floor(receivedSteps);
+
+  document.getElementById("deviceId").textContent =
+    data.device_id || "--";
+
+  document.getElementById("stepEvent").textContent =
+    data.event_type || "--";
+
+  document.getElementById("stepTime").textContent =
+    formatTime(data.timestamp);
+
+  document.getElementById("stepStatus").textContent =
+    "✅ 已接收到步數資料";
+
+  lastStepAt = Date.now();
+}
+
+// =====================================
+// 5. 接收加速度資料
+// =====================================
+
+function handleAccelerationData(data) {
+  const x = Number(data.x);
+  const y = Number(data.y);
+  const z = Number(data.z);
+
+  if (
+    data.x === null ||
+    data.y === null ||
+    data.z === null ||
+    data.x === undefined ||
+    data.y === undefined ||
+    data.z === undefined ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(z)
+  ) {
+    console.warn("加速度資料不正確：", data);
+    return;
+  }
+
+  let total = Number(data.total);
+
+  if (data.total === null || !Number.isFinite(total)) {
+    total = Math.sqrt(x * x + y * y + z * z);
+  }
+
+  // 更新數字畫面
+  document.getElementById("ax").textContent = x.toFixed(2);
+  document.getElementById("ay").textContent = y.toFixed(2);
+  document.getElementById("az").textContent = z.toFixed(2);
+  document.getElementById("total").textContent = total.toFixed(2);
+
+  // 更新時間與狀態
+  document.getElementById("accelTime").textContent =
+    formatTime(data.timestamp);
+
+  document.getElementById("accelStatus").textContent =
+    "✅ 正在接收加速度資料，裝置：" +
+    (data.device_id || "未提供");
+
+  lastAccelAt = Date.now();
+
+  // 更新即時圖表
+  addChartData(x, y, z, total, data.timestamp);
+}
+
+// =====================================
+// 6. MQTT 連線
 // =====================================
 
 function connectMQTT() {
+  if (typeof mqtt === "undefined") {
+    setStatus("MQTT 程式載入失敗，請檢查網路", "#803737");
+    return;
+  }
+
   mqttClient = mqtt.connect(MQTT_URL, {
     clientId: "steps_pc_" + Math.random().toString(16).slice(2),
     clean: true,
@@ -268,7 +548,7 @@ function connectMQTT() {
 
     mqttClient.subscribe(
       [STEP_TOPIC, ACCEL_TOPIC],
-      (error) => {
+      error => {
         if (error) {
           console.error("訂閱主題失敗：", error);
           setStatus("訂閱主題失敗", "#803737");
@@ -287,13 +567,13 @@ function connectMQTT() {
     setStatus("MQTT 已離線", "#803737");
   });
 
-  mqttClient.on("error", (error) => {
+  mqttClient.on("error", error => {
     console.error("MQTT 錯誤：", error);
     setStatus("MQTT 連線錯誤", "#803737");
   });
 
   // =====================================
-  // 接收 MQTT 訊息
+  // 7. 接收 MQTT 訊息
   // =====================================
 
   mqttClient.on("message", (topic, payload) => {
@@ -305,94 +585,25 @@ function connectMQTT() {
       if (!data || typeof data !== "object") {
         throw new Error("收到的資料不是 JSON 物件");
       }
+
     } catch (error) {
       console.error("JSON 格式錯誤：", error);
       return;
     }
 
-    // ---------------------------------
-    // 步數資料
-    // ---------------------------------
-
     if (topic === STEP_TOPIC) {
-      const receivedSteps = Number(data.steps);
-
-      if (
-        data.steps === null ||
-        data.steps === undefined ||
-        !Number.isFinite(receivedSteps) ||
-        receivedSteps < 0
-      ) {
-        console.warn("步數資料不正確：", data);
-        return;
-      }
-
-      document.getElementById("steps").textContent =
-        Math.floor(receivedSteps);
-
-      document.getElementById("deviceId").textContent =
-        data.device_id || "--";
-
-      document.getElementById("stepEvent").textContent =
-        data.event_type || "--";
-
-      document.getElementById("stepTime").textContent =
-        formatTime(data.timestamp);
-
-      document.getElementById("stepStatus").textContent =
-        "✅ 已接收到步數資料";
-
-      lastStepAt = Date.now();
-
+      handleStepData(data);
       return;
     }
 
-    // ---------------------------------
-    // 加速度資料
-    // ---------------------------------
-
     if (topic === ACCEL_TOPIC) {
-      const x = Number(data.x);
-      const y = Number(data.y);
-      const z = Number(data.z);
-
-      if (
-        data.x === null ||
-        data.y === null ||
-        data.z === null ||
-        !Number.isFinite(x) ||
-        !Number.isFinite(y) ||
-        !Number.isFinite(z)
-      ) {
-        console.warn("加速度資料不正確：", data);
-        return;
-      }
-
-      let total = Number(data.total);
-
-      if (!Number.isFinite(total)) {
-        total = Math.sqrt(x*x + y*y + z*z);
-      }
-
-      document.getElementById("ax").textContent = x.toFixed(2);
-      document.getElementById("ay").textContent = y.toFixed(2);
-      document.getElementById("az").textContent = z.toFixed(2);
-      document.getElementById("total").textContent = total.toFixed(2);
-
-      document.getElementById("accelTime").textContent =
-        formatTime(data.timestamp);
-
-      document.getElementById("accelStatus").textContent =
-        "✅ 正在接收加速度資料，裝置：" +
-        (data.device_id || "未提供");
-
-      lastAccelAt = Date.now();
+      handleAccelerationData(data);
     }
   });
 }
 
 // =====================================
-// 檢查資料是否中斷
+// 8. 檢查資料是否中斷
 // =====================================
 
 setInterval(() => {
@@ -409,10 +620,12 @@ setInterval(() => {
   }
 }, 1000);
 
-// 啟動
+// =====================================
+// 9. 啟動
+// =====================================
+
 connectMQTT();
 
 </script>
-
 </body>
 </html>
