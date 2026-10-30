@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PC 加速度接收端</title>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #172334;
+  color: white;
+  text-align: center;
+  padding: 25px;
+}
+
+.card {
+  background: #263b55;
+  padding: 25px;
+  margin: 20px auto;
+  max-width: 500px;
+  border-radius: 15px;
+}
+
+.data {
+  font-size: 30px;
+  margin: 20px;
+  font-weight: bold;
+}
+
+h1 { color: #63c5ff; }
+
+#status { color: #4cffaa; }
+</style>
+</head>
+
+<body>
+
+<h1>PC 三軸加速度接收器</h1>
+
+<div class="card">
+
+  <h2>MQTT 連線狀態</h2>
+  <h3 id="status">連線中...</h3>
+
+</div>
+
+<div class="card">
+
+  <h2>即時加速度數據</h2>
+
+  <div class="data">
+    X：<span id="x">0</span>
+  </div>
+
+  <div class="data">
+    Y：<span id="y">0</span>
+  </div>
+
+  <div class="data">
+    Z：<span id="z">0</span>
+  </div>
+
+  <hr>
+
+  <div class="data">
+    合成加速度：<span id="total">0</span>
+  </div>
+
+  <p>單位：m/s²</p>
+
+  <p>最後更新：<span id="time">--</span></p>
+
+</div>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<script>
+
+const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+
+const TOPIC = "classroom/accelerometer/phone01";
+
+const client = mqtt.connect(BROKER, {
+  clientId: "pc_" + Math.random().toString(16).slice(2, 10),
+  clean: true,
+  reconnectPeriod: 3000
+});
+
+client.on("connect", function() {
+
+  document.getElementById("status").innerText = "已連線";
+
+  client.subscribe(TOPIC);
+
+});
+
+client.on("reconnect", function() {
+  document.getElementById("status").innerText = "重新連線中...";
+});
+
+client.on("close", function() {
+  document.getElementById("status").innerText = "連線中斷";
+});
+
+client.on("error", function(error) {
+  document.getElementById("status").innerText = "連線錯誤";
+  console.error(error);
+});
+
+client.on("message", function(topic, message) {
+
+  if (topic !== TOPIC) return;
+
+  try {
+
+    const data = JSON.parse(message.toString());
+
+    const x = Number(data.x);
+    const y = Number(data.y);
+    const z = Number(data.z);
+
+    const total = Math.sqrt(x*x + y*y + z*z);
+
+    document.getElementById("x").innerText = x.toFixed(2);
+    document.getElementById("y").innerText = y.toFixed(2);
+    document.getElementById("z").innerText = z.toFixed(2);
+
+    document.getElementById("total").innerText =
+      total.toFixed(2);
+
+    document.getElementById("time").innerText =
+      new Date(data.timestamp || Date.now()).toLocaleTimeString();
+
+  } catch(error) {
+    console.error("資料解析錯誤", error);
+  }
+
+});
+
+</script>
+
+</body>
+</html>
