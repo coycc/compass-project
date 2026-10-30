@@ -4,11 +4,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>地震警報儀－電腦監控</title>
+<title>第三次作業－地震警報電腦監控</title>
+
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
 <style>
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
@@ -23,7 +26,9 @@ body {
   margin: auto;
 }
 
-h1 { text-align: center; }
+h1 {
+  text-align: center;
+}
 
 .card {
   background: #1d2a40;
@@ -118,30 +123,47 @@ button {
 
 @media (max-width: 600px) {
   body { padding: 12px; }
-  .grid { grid-template-columns: 1fr; }
-  .value { font-size: 24px; }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .value {
+    font-size: 24px;
+  }
 }
 </style>
 </head>
 
 <body>
+
 <div class="container">
 
 <h1>🚨 地震警報儀－電腦監控</h1>
 
 <div class="card">
-  <div class="status" id="mqttStatus">MQTT 連線中...</div>
-  <p class="small">監測 Topic：classroom/earthquake/phone01</p>
+  <div class="status" id="mqttStatus">
+    MQTT 連線中...
+  </div>
+
+  <p class="small">
+    監測 Topic：classroom/earthquake/phone01
+  </p>
 </div>
 
 <div class="card">
   <h2>🚨 地震警報狀態</h2>
 
   <div class="alarm" id="alarmPanel">
-    <div class="alarm-title" id="alarmStatus">🟢 目前正常</div>
+
+    <div class="alarm-title" id="alarmStatus">
+      🟢 目前正常
+    </div>
+
     <div class="alarm-subtitle" id="alarmMessage">
       等待手機感測器資料
     </div>
+
   </div>
 </div>
 
@@ -149,6 +171,7 @@ button {
   <h2>📊 即時加速度資料</h2>
 
   <div class="grid">
+
     <div class="box">
       X 軸
       <span class="value" id="x">0.00</span>
@@ -163,10 +186,14 @@ button {
       Z 軸
       <span class="value" id="z">0.00</span>
     </div>
+
   </div>
 
   <p style="text-align:center">總加速度</p>
-  <div class="total" id="total">0.00 m/s²</div>
+
+  <div class="total" id="total">
+    0.00 m/s²
+  </div>
 
   <p class="small">
     警報門檻：0.80 m/s²
@@ -176,105 +203,192 @@ button {
 <div class="card">
   <h2>📋 裝置資訊</h2>
 
-  <p>裝置 ID：<strong id="deviceId">尚未收到</strong></p>
-  <p>資料類型：<strong id="dataType">尚未收到</strong></p>
-  <p>最後更新時間：<strong id="lastTime">尚未收到</strong></p>
-  <p>連線狀態：<strong id="sensorStatus">等待手機資料</strong></p>
+  <p>
+    裝置 ID：
+    <strong id="deviceId">尚未收到</strong>
+  </p>
+
+  <p>
+    資料類型：
+    <strong id="dataType">尚未收到</strong>
+  </p>
+
+  <p>
+    最後更新時間：
+    <strong id="lastTime">尚未收到</strong>
+  </p>
+
+  <p>
+    感測器狀態：
+    <strong id="sensorStatus">等待手機資料</strong>
+  </p>
 </div>
 
 <div class="card">
-  <h2>🔊 警報聲音</h2>
+  <h2>🔊 電腦警報聲</h2>
 
-  <button id="soundBtn">🔊 啟用電腦警報聲</button>
+  <button id="soundBtn">
+    🔇 點擊啟用電腦警報聲
+  </button>
 
   <p class="small">
-    請先按下按鈕授權瀏覽器播放聲音，發生警報時電腦才會播放警報音。
+    必須先點擊按鈕授權瀏覽器播放聲音。
   </p>
 </div>
 
 </div>
 
 <script>
+
 // =====================================
 // 1. MQTT 設定
 // =====================================
 
-const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
-const TOPIC = "classroom/earthquake/phone01";
+const MQTT_URL =
+  "wss://broker.hivemq.com:8884/mqtt";
 
-const mqttStatus = document.getElementById("mqttStatus");
+const TOPIC =
+  "classroom/earthquake/phone01";
 
 let mqttClient = null;
-let sensorConnected = false;
-let alarmActive = false;
+
+const mqttStatus =
+  document.getElementById("mqttStatus");
 
 function connectMQTT() {
+
+  if (typeof mqtt === "undefined") {
+
+    mqttStatus.textContent =
+      "MQTT 程式載入失敗，請檢查網路";
+
+    return;
+
+  }
+
   mqttClient = mqtt.connect(MQTT_URL, {
-    clientId: "earthquake_pc_" +
+
+    clientId:
+      "earthquake_pc_" +
       Math.random().toString(16).slice(2),
+
     clean: true,
     connectTimeout: 10000,
     reconnectPeriod: 3000
+
   });
 
   mqttClient.on("connect", () => {
-    mqttStatus.textContent = "✅ MQTT 已連線";
-    mqttStatus.style.background = "#176b50";
+
+    mqttStatus.textContent =
+      "✅ MQTT 已連線";
+
+    mqttStatus.style.background =
+      "#176b50";
 
     mqttClient.subscribe(TOPIC, error => {
-      if (error) console.error(error);
+
+      if (error) {
+        console.error("訂閱失敗：", error);
+      }
+
     });
+
   });
 
   mqttClient.on("reconnect", () => {
-    mqttStatus.textContent = "正在重新連線...";
+
+    mqttStatus.textContent =
+      "MQTT 正在重新連線...";
+
   });
 
   mqttClient.on("offline", () => {
-    mqttStatus.textContent = "MQTT 離線";
-    mqttStatus.style.background = "#803737";
+
+    mqttStatus.textContent =
+      "MQTT 已離線";
+
+    mqttStatus.style.background =
+      "#803737";
+
   });
 
   mqttClient.on("error", error => {
+
     console.error(error);
-    mqttStatus.textContent = "MQTT 連線錯誤";
+
+    mqttStatus.textContent =
+      "MQTT 連線錯誤";
+
   });
 
   mqttClient.on("message", (topic, payload) => {
+
     if (topic !== TOPIC) return;
 
     try {
+
       const data = JSON.parse(payload.toString());
+
       handleData(data);
+
     } catch (error) {
-      console.error("資料格式錯誤", error);
+
+      console.error("資料格式錯誤：", error);
+
     }
+
   });
+
 }
 
 // =====================================
-// 2. 警報畫面
+// 2. 警報狀態
 // =====================================
+
+let alarmActive = false;
+
+let lastMessageAt = 0;
 
 function updateAlarm(active, total) {
-  const panel = document.getElementById("alarmPanel");
-  const status = document.getElementById("alarmStatus");
-  const message = document.getElementById("alarmMessage");
+
+  const panel =
+    document.getElementById("alarmPanel");
+
+  const status =
+    document.getElementById("alarmStatus");
+
+  const message =
+    document.getElementById("alarmMessage");
 
   if (active) {
+
     panel.classList.add("active");
-    status.textContent = "🚨 偵測到強烈震動！";
+
+    status.textContent =
+      "🚨 偵測到強烈震動！";
+
     message.textContent =
-      "加速度：" + total.toFixed(2) + " m/s²，請注意安全！";
+      "加速度：" +
+      total.toFixed(2) +
+      " m/s²，請注意安全！";
+
   } else {
+
     panel.classList.remove("active");
-    status.textContent = "🟢 目前正常";
-    message.textContent = "尚未偵測到超過門檻的震動";
+
+    status.textContent =
+      "🟢 目前正常";
+
+    message.textContent =
+      "尚未偵測到超過門檻的震動";
+
   }
+
 }
 
 // =====================================
-// 3. 電腦警報音
+// 3. 電腦警報聲
 // =====================================
 
 let audioContext = null;
@@ -282,167 +396,270 @@ let soundEnabled = false;
 let soundTimer = null;
 
 async function enableSound() {
+
   const AudioContextClass =
-    window.AudioContext || window.webkitAudioContext;
+    window.AudioContext ||
+    window.webkitAudioContext;
 
   if (!AudioContextClass) {
+
     alert("此瀏覽器不支援 Web Audio。");
     return;
+
   }
 
-  if (!audioContext) {
-    audioContext = new AudioContextClass();
+  try {
+
+    if (!audioContext) {
+      audioContext = new AudioContextClass();
+    }
+
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
+    soundEnabled = true;
+
+    document.getElementById("soundBtn").textContent =
+      "🔊 電腦警報聲已啟用";
+
+    if (alarmActive) {
+      startAlarmSound();
+    }
+
+  } catch (error) {
+
+    console.error(error);
+
+    alert("音效啟用失敗：" + error.message);
+
   }
 
-  if (audioContext.state === "suspended") {
-    await audioContext.resume();
-  }
-
-  soundEnabled = true;
-
-  document.getElementById("soundBtn").textContent =
-    "🔊 電腦警報聲已啟用";
-
-  if (alarmActive) startAlarmSound();
 }
 
 function beep() {
+
   if (!soundEnabled || !audioContext) return;
 
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
+  if (audioContext.state !== "running") return;
+
+  const oscillator =
+    audioContext.createOscillator();
+
+  const gain =
+    audioContext.createGain();
 
   oscillator.type = "square";
   oscillator.frequency.value = 900;
 
-  gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
-  gain.gain.exponentialRampToValueAtTime(
-    0.15, audioContext.currentTime + 0.03
+  gain.gain.setValueAtTime(
+    0.0001,
+    audioContext.currentTime
   );
+
   gain.gain.exponentialRampToValueAtTime(
-    0.0001, audioContext.currentTime + 0.25
+    0.15,
+    audioContext.currentTime + 0.03
+  );
+
+  gain.gain.exponentialRampToValueAtTime(
+    0.0001,
+    audioContext.currentTime + 0.25
   );
 
   oscillator.connect(gain);
   gain.connect(audioContext.destination);
 
   oscillator.start();
-  oscillator.stop(audioContext.currentTime + 0.27);
+
+  oscillator.stop(
+    audioContext.currentTime + 0.27
+  );
+
 }
 
 function startAlarmSound() {
+
   if (!soundEnabled || soundTimer) return;
 
   beep();
+
   soundTimer = setInterval(beep, 600);
+
 }
 
 function stopAlarmSound() {
+
   clearInterval(soundTimer);
+
   soundTimer = null;
+
 }
 
 // =====================================
-// 4. 更新電腦資料
+// 4. 處理手機傳來的資料
 // =====================================
 
 function formatTime(timestamp) {
-  const date = timestamp ? new Date(timestamp) : new Date();
 
-  if (Number.isNaN(date.getTime())) return "--";
+  const date = timestamp
+    ? new Date(timestamp)
+    : new Date();
+
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
 
   return date.toLocaleString("zh-TW", {
     hour12: false
   });
+
 }
 
 function handleData(data) {
-  const type = data.type || "reading";
+
+  lastMessageAt = Date.now();
 
   document.getElementById("deviceId").textContent =
     data.device_id || "--";
 
-  document.getElementById("dataType").textContent = type;
+  document.getElementById("dataType").textContent =
+    data.type || "--";
 
   document.getElementById("lastTime").textContent =
     formatTime(data.timestamp);
 
-  sensorConnected = true;
-
   document.getElementById("sensorStatus").textContent =
-    "✅ 已接收手機資料";
+    "✅ 已接收到手機資料";
 
-  // 更新 XYZ
-  const x = Number(data.x) || 0;
-  const y = Number(data.y) || 0;
-  const z = Number(data.z) || 0;
+  const x = Number(data.x);
+  const y = Number(data.y);
+  const z = Number(data.z);
 
-  let total = Number(data.total);
+  const valid =
+    Number.isFinite(x) &&
+    Number.isFinite(y) &&
+    Number.isFinite(z);
+
+  if (valid) {
+
+    let total = Number(data.total);
+
+    if (!Number.isFinite(total)) {
+      total = Math.sqrt(x*x + y*y + z*z);
+    }
+
+    document.getElementById("x").textContent =
+      x.toFixed(2);
+
+    document.getElementById("y").textContent =
+      y.toFixed(2);
+
+    document.getElementById("z").textContent =
+      z.toFixed(2);
+
+    document.getElementById("total").textContent =
+      total.toFixed(2) + " m/s²";
+
+  }
+
+  let total = valid ? Number(data.total) : 0;
 
   if (!Number.isFinite(total)) {
-    total = Math.sqrt(x*x + y*y + z*z);
+    total = valid
+      ? Math.sqrt(x*x + y*y + z*z)
+      : 0;
   }
 
-  document.getElementById("x").textContent = x.toFixed(2);
-  document.getElementById("y").textContent = y.toFixed(2);
-  document.getElementById("z").textContent = z.toFixed(2);
+  // 手機停止監測
+  if (data.type === "stop") {
 
-  document.getElementById("total").textContent =
-    total.toFixed(2) + " m/s²";
-
-  // 依照手機傳來的狀態同步警報
-  if (type === "stop") {
     alarmActive = false;
+
     updateAlarm(false, total);
+
     stopAlarmSound();
+
     document.getElementById("sensorStatus").textContent =
       "手機已停止監測";
+
     return;
+
   }
 
-  const newAlarmState = data.active === true;
+  // 同步手機的警報狀態
+  const newAlarmState =
+    data.active === true;
 
   if (newAlarmState !== alarmActive) {
+
     alarmActive = newAlarmState;
 
     if (alarmActive) {
+
       startAlarmSound();
+
     } else {
+
       stopAlarmSound();
+
     }
+
   }
 
   updateAlarm(alarmActive, total);
+
 }
 
 // =====================================
-// 5. 音效按鈕及連線監控
+// 5. 音效按鈕
 // =====================================
 
 document.getElementById("soundBtn")
-  .addEventListener("click", enableSound);
+  .addEventListener("click", async () => {
+
+    if (!soundEnabled) {
+
+      await enableSound();
+
+    } else {
+
+      soundEnabled = false;
+
+      stopAlarmSound();
+
+      document.getElementById("soundBtn").textContent =
+        "🔇 電腦警報聲已關閉";
+
+    }
+
+  });
+
+// =====================================
+// 6. 資料中斷檢查
+// =====================================
 
 setInterval(() => {
-  // 這裡以實際資料接收時間判斷
-  if (lastMessageAt && Date.now() - lastMessageAt > 5000) {
-    sensorConnected = false;
+
+  if (
+    lastMessageAt > 0 &&
+    Date.now() - lastMessageAt > 5000
+  ) {
 
     document.getElementById("sensorStatus").textContent =
-      "⚠️ 5 秒沒有收到手機資料";
+      "⚠️ 超過 5 秒沒有收到手機資料";
+
   }
+
 }, 1000);
 
-let lastMessageAt = 0;
-
-// 包裝原本資料接收，記錄最新時間
-const originalHandleData = handleData;
-handleData = function(data) {
-  lastMessageAt = Date.now();
-  originalHandleData(data);
-};
+// =====================================
+// 7. 開始連線
+// =====================================
 
 connectMQTT();
 
 </script>
+
 </body>
 </html>
