@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>電腦即時步數監控</title>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 25px;
+  font-family: Arial, "Noto Sans TC", sans-serif;
+  background: #101827;
+  color: white;
+}
+
+.container {
+  max-width: 950px;
+  margin: auto;
+}
+
+h1 {
+  text-align: center;
+  margin-bottom: 25px;
+}
+
+.card {
+  background: #1d2a40;
+  border-radius: 16px;
+  padding: 22px;
+  margin-bottom: 18px;
+}
+
+.status {
+  padding: 13px;
+  border-radius: 9px;
+  background: #34445e;
+  text-align: center;
+}
+
+.steps {
+  font-size: 90px;
+  font-weight: bold;
+  text-align: center;
+  color: #43e0a1;
+  margin: 10px 0;
+}
+
+.subtitle {
+  text-align: center;
+  color: #c3cee0;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.info-box {
+  background: #293b58;
+  padding: 15px;
+  border-radius: 10px;
+}
+
+.info-label {
+  color: #b6c4da;
+  font-size: 14px;
+}
+
+.info-value {
+  font-size: 18px;
+  font-weight: bold;
+  margin-top: 9px;
+  word-break: break-word;
+}
+
+.accel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.accel-box {
+  background: #293b58;
+  border-radius: 10px;
+  padding: 18px;
+  text-align: center;
+}
+
+.accel-value {
+  display: block;
+  margin-top: 10px;
+  font-size: 30px;
+  color: #73c7ff;
+  font-weight: bold;
+}
+
+.small {
+  font-size: 13px;
+  color: #b6c4da;
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  body {
+    padding: 12px;
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .steps {
+    font-size: 70px;
+  }
+
+  .accel-value {
+    font-size: 21px;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>📊 手機步數即時監控</h1>
+
+<div class="card">
+  <div class="status" id="mqttStatus">
+    MQTT 連線中...
+  </div>
+
+  <p class="small">
+    步數主題：nutc/im/1411331040/steps
+  </p>
+
+  <p class="small">
+    加速度主題：classroom/accelerometer/phone01
+  </p>
+</div>
+
+<div class="card">
+  <h2>🚶 手機累計步數</h2>
+
+  <div class="steps" id="steps">0</div>
+
+  <div class="subtitle">目前累計步數</div>
+</div>
+
+<div class="card">
+  <h2>📋 步數訊息</h2>
+
+  <div class="info-grid">
+
+    <div class="info-box">
+      <div class="info-label">裝置 ID</div>
+      <div class="info-value" id="deviceId">尚未收到</div>
+    </div>
+
+    <div class="info-box">
+      <div class="info-label">事件類型</div>
+      <div class="info-value" id="stepEvent">尚未收到</div>
+    </div>
+
+    <div class="info-box">
+      <div class="info-label">最後更新時間</div>
+      <div class="info-value" id="stepTime">尚未收到</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="card">
+  <h2>📱 手機線性加速度</h2>
+
+  <div class="accel-grid">
+
+    <div class="accel-box">
+      X 軸
+      <span class="accel-value" id="ax">0.00</span>
+    </div>
+
+    <div class="accel-box">
+      Y 軸
+      <span class="accel-value" id="ay">0.00</span>
+    </div>
+
+    <div class="accel-box">
+      Z 軸
+      <span class="accel-value" id="az">0.00</span>
+    </div>
+
+  </div>
+
+  <p class="subtitle">
+    加速度大小：
+    <span id="total">0.00</span> m/s²
+  </p>
+
+  <p class="small" id="accelStatus">
+    等待手機加速度資料...
+  </p>
+
+  <p class="small">
+    加速度最後更新：
+    <span id="accelTime">尚未收到</span>
+  </p>
+</div>
+
+</div>
+
+<script>
+
+// =====================================
+// MQTT 設定
+// =====================================
+
+const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
+
+const STEP_TOPIC = "nutc/im/1411331040/steps";
+const ACCEL_TOPIC = "classroom/accelerometer/phone01";
+
+const mqttStatus = document.getElementById("mqttStatus");
+
+let mqttClient = null;
+let lastAccelAt = 0;
+
+// =====================================
+// MQTT 連線
+// =====================================
+
+function connectMQTT() {
+
+  mqttClient = mqtt.connect(MQTT_URL, {
+    clientId: "steps_pc_" + Math.random().toString(16).slice(2),
+    clean: true,
+    connectTimeout: 10000,
+    reconnectPeriod: 3000
+  });
+
+  mqttClient.on("connect", () => {
+
+    mqttStatus.textContent = "✅ MQTT 已連線";
+    mqttStatus.style.background = "#176b50";
+
+    mqttClient.subscribe(
+      [STEP_TOPIC, ACCEL_TOPIC],
+      (error) => {
+
+        if (error) {
+          console.error("訂閱失敗", error);
+          mqttStatus.textContent = "訂閱主題失敗";
+        } else {
+          console.log("已訂閱步數及加速度主題");
+        }
+
+      }
+    );
+
+  });
+
+  mqttClient.on("reconnect", () => {
+    mqttStatus.textContent = "正在重新連線...";
+    mqttStatus.style.background = "#80642b";
+  });
+
+  mqttClient.on("offline", () => {
+    mqttStatus.textContent = "MQTT 離線";
+    mqttStatus.style.background = "#803737";
+  });
+
+  mqttClient.on("error", (error) => {
+    console.error("MQTT 錯誤：", error);
+    mqttStatus.textContent = "MQTT 連線發生錯誤";
+  });
+
+  // =====================================
+  // 接收 MQTT 訊息
+  // =====================================
+
+  mqttClient.on("message", (topic, payload) => {
+
+    let data;
+
+    try {
+      data = JSON.parse(payload.toString());
+    } catch (error) {
+      console.error("JSON 格式錯誤", error);
+      return;
+    }
+
+    // -------------------------------------
+    // 步數資料
+    // -------------------------------------
+
+    if (topic === STEP_TOPIC) {
+
+      if (Number.isFinite(Number(data.steps))) {
+        document.getElementById("steps").textContent =
+          Number(data.steps);
+      }
+
+      document.getElementById("deviceId").textContent =
+        data.device_id || "--";
+
+      document.getElementById("stepEvent").textContent =
+        data.event_type || "--";
+
+      document.getElementById("stepTime").textContent =
+        formatTime(data.timestamp);
+
+      return;
+    }
+
+    // -------------------------------------
+    // 加速度資料
+    // -------------------------------------
+
+    if (topic === ACCEL_TOPIC) {
+
+      const x = Number(data.x);
+      const y = Number(data.y);
+      const z = Number(data.z);
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !Number.isFinite(z)
+      ) {
+        console.warn("加速度資料格式不正確", data);
+        return;
+      }
+
+      const total = Number.isFinite(Number(data.total))
+        ? Number(data.total)
+        : Math.sqrt(x*x + y*y + z*z);
+
+      document.getElementById("ax").textContent = x.toFixed(2);
+      document.getElementById("ay").textContent = y.toFixed(2);
+      document.getElementById("az").textContent = z.toFixed(2);
+      document.getElementById("total").textContent = total.toFixed(2);
+
+      document.getElementById("accelTime").textContent =
+        formatTime(data.timestamp);
+
+      document.getElementById("accelStatus").textContent =
+        "✅ 正在接收加速度資料，裝置：" +
+        (data.device_id || "未提供");
+
+      lastAccelAt = Date.now();
+
+    }
+
+  });
+
+}
+
+// =====================================
+// 時間格式
+// =====================================
+
+function formatTime(timestamp) {
+
+  if (!timestamp) return "--";
+
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+
+  return date.toLocaleTimeString("zh-TW", {
+    hour12: false
+  });
+
+}
+
+// =====================================
+// 檢查加速度資料是否中斷
+// =====================================
+
+setInterval(() => {
+
+  if (lastAccelAt === 0) return;
+
+  const elapsed = Date.now() - lastAccelAt;
+
+  if (elapsed > 3000) {
+    document.getElementById("accelStatus").textContent =
+      "⚠️ 超過 3 秒沒有收到新的加速度資料，畫面保留最後一次數值";
+  }
+
+}, 1000);
+
+// 啟動 MQTT
+connectMQTT();
+
+</script>
+
+</body>
+</html>
