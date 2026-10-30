@@ -1,10 +1,12 @@
-
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PC 三軸加速度 MQTT 即時監測</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>電腦即時加速度監控</title>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
 * {
@@ -13,105 +15,108 @@
 
 body {
   margin: 0;
-  padding: 24px;
+  padding: 25px;
   font-family: Arial, "Noto Sans TC", sans-serif;
-  color: #eef4ff;
   background: #101827;
-}
-
-h1 {
-  color: #75c9ff;
-  text-align: center;
+  color: white;
 }
 
 .container {
-  width: min(100%, 1050px);
+  max-width: 1100px;
   margin: auto;
 }
 
+h1 {
+  text-align: center;
+  margin-bottom: 25px;
+}
+
 .card {
-  margin: 16px 0;
-  padding: 20px;
-  border: 1px solid #30435e;
-  border-radius: 16px;
-  background: #1d2a3e;
+  background: #1d2a40;
+  padding: 22px;
+  border-radius: 15px;
+  margin-bottom: 18px;
 }
 
 .status {
-  font-weight: bold;
-  color: #ffc66d;
-}
-
-.status.connected {
-  color: #58e6a5;
-}
-
-code {
-  overflow-wrap: anywhere;
-  color: #c5dcff;
-}
-
-button {
-  padding: 11px 18px;
-  border: 0;
+  padding: 12px;
   border-radius: 9px;
-  color: #092719;
-  background: #58d99a;
-  font-size: 15px;
-  font-weight: bold;
-  cursor: pointer;
+  background: #34445e;
+  text-align: center;
 }
 
-.values {
+.grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
 }
 
 .value-box {
-  padding: 16px;
-  border-radius: 12px;
-  background: #263750;
+  background: #293b58;
+  padding: 18px 8px;
+  border-radius: 10px;
+  text-align: center;
 }
 
-.value-title {
-  color: #b7c9df;
+.value {
+  display: block;
+  font-size: 28px;
+  font-weight: bold;
+  margin-top: 10px;
+  color: #73c7ff;
+  overflow-wrap: anywhere;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.info-box {
+  background: #293b58;
+  padding: 14px;
+  border-radius: 10px;
+}
+
+.info-label {
+  color: #b6c4da;
   font-size: 14px;
 }
 
-.value-number {
-  display: block;
-  margin-top: 8px;
-  font-size: 30px;
+.info-value {
+  font-size: 17px;
   font-weight: bold;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
 }
 
-.unit {
-  color: #a9bdd8;
-  font-size: 13px;
-}
-
-.chart-wrap {
+.chart-container {
   position: relative;
-  height: 390px;
+  height: 380px;
   width: 100%;
 }
 
-.chart-note {
-  color: #a9bdd8;
+.small {
   font-size: 13px;
+  line-height: 1.7;
+  color: #b6c4da;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 750px) {
   body {
-    padding: 14px;
+    padding: 12px;
   }
 
-  .values {
+  .grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .chart-wrap {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-container {
     height: 320px;
   }
 }
@@ -120,285 +125,435 @@ button {
 
 <body>
 
-<main class="container">
+<div class="container">
 
-<h1>📈 PC 三軸加速度即時監測</h1>
+  <h1>📊 手機即時加速度監控</h1>
 
-<div class="card">
+  <div class="card">
 
-  <h2>MQTT 連線狀態</h2>
+    <div class="status" id="mqttStatus">
+      MQTT 正在連線...
+    </div>
 
-  <p>
-    狀態：
-    <span id="status" class="status">連線中...</span>
-  </p>
+    <p class="small">
+      MQTT 主題：classroom/accelerometer/phone01
+    </p>
 
-  <p>Broker：
-    <code>wss://broker.hivemq.com:8884/mqtt</code>
-  </p>
+    <p class="small">
+      資料來源：手機 accelerometer
+    </p>
 
-  <p>Topic：
-    <code id="topicLabel"></code>
-  </p>
-
-  <p>收到訊息數：
-    <strong id="messageCount">0</strong>
-  </p>
-
-  <button id="reconnectButton">重新連線</button>
-
-</div>
-
-<div class="card">
-
-<h2>目前加速度數值</h2>
-
-<div class="values">
-
-  <div class="value-box">
-    <span class="value-title">X 軸</span>
-    <strong class="value-number" id="x">--</strong>
-    <span class="unit">m/s²</span>
   </div>
 
-  <div class="value-box">
-    <span class="value-title">Y 軸</span>
-    <strong class="value-number" id="y">--</strong>
-    <span class="unit">m/s²</span>
+  <div class="card">
+
+    <h2>📱 即時加速度數值</h2>
+
+    <div class="grid">
+
+      <div class="value-box">
+        X 軸
+        <span class="value" id="x">0.00</span>
+        <small>m/s²</small>
+      </div>
+
+      <div class="value-box">
+        Y 軸
+        <span class="value" id="y">0.00</span>
+        <small>m/s²</small>
+      </div>
+
+      <div class="value-box">
+        Z 軸
+        <span class="value" id="z">0.00</span>
+        <small>m/s²</small>
+      </div>
+
+      <div class="value-box">
+        總加速度
+        <span class="value" id="total">0.00</span>
+        <small>m/s²</small>
+      </div>
+
+    </div>
+
   </div>
 
-  <div class="value-box">
-    <span class="value-title">Z 軸</span>
-    <strong class="value-number" id="z">--</strong>
-    <span class="unit">m/s²</span>
+  <div class="card">
+
+    <h2>📋 裝置資訊</h2>
+
+    <div class="info-grid">
+
+      <div class="info-box">
+        <div class="info-label">裝置 ID</div>
+        <div class="info-value" id="deviceId">尚未收到</div>
+      </div>
+
+      <div class="info-box">
+        <div class="info-label">最後更新時間</div>
+        <div class="info-value" id="updateTime">尚未收到</div>
+      </div>
+
+    </div>
+
+    <p class="small" id="dataStatus">
+      等待手機資料...
+    </p>
+
   </div>
 
-  <div class="value-box">
-    <span class="value-title">合成加速度</span>
-    <strong class="value-number" id="total">--</strong>
-    <span class="unit">m/s²</span>
+  <div class="card">
+
+    <h2>📈 加速度即時折線圖</h2>
+
+    <div class="chart-container">
+      <canvas id="accelerationChart"></canvas>
+    </div>
+
+    <p class="small">
+      圖表顯示 X、Y、Z 與總加速度。
+      只保留最新 100 筆資料。
+    </p>
+
   </div>
 
 </div>
-
-<p class="chart-note">
-  合成加速度 = √(X² + Y² + Z²)
-</p>
-
-<p>
-  最後收到資料：
-  <span id="lastReceived">尚無資料</span>
-</p>
-
-</div>
-
-<div class="card">
-
-<h2>即時加速度折線圖</h2>
-
-<div class="chart-wrap">
-  <canvas id="accelerationChart"></canvas>
-</div>
-
-<p class="chart-note">
-  顯示最近 100 筆資料，約為最近 10 秒的變化。
-</p>
-
-</div>
-
-</main>
-
-<!-- Chart.js -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-
-<!-- MQTT.js -->
-<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
 <script>
 
-// MQTT 設定
-const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+// =======================================
+// 1. MQTT 設定
+// =======================================
+
+const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
+
 const TOPIC = "classroom/accelerometer/phone01";
 
-const MAX_POINTS = 100;
-
-const $ = id => document.getElementById(id);
-
-$("topicLabel").textContent = TOPIC;
-
 let mqttClient = null;
-let messageCount = 0;
-let firstTimestamp = null;
+let lastMessageTime = 0;
 
+const mqttStatus = document.getElementById("mqttStatus");
+const dataStatus = document.getElementById("dataStatus");
 
-// 建立即時折線圖
-const chart = new Chart($("accelerationChart"), {
+function setMQTTStatus(message, color) {
 
-  type: "line",
-
-  data: {
-
-    labels: [],
-
-    datasets: [
-
-      {
-        label: "X 軸",
-        data: [],
-        borderColor: "#2696ed",
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.15
-      },
-
-      {
-        label: "Y 軸",
-        data: [],
-        borderColor: "#20ad78",
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.15
-      },
-
-      {
-        label: "Z 軸",
-        data: [],
-        borderColor: "#e6a33b",
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.15
-      },
-
-      {
-        label: "合成加速度",
-        data: [],
-        borderColor: "#bd80e8",
-        borderWidth: 2.5,
-        pointRadius: 0,
-        tension: 0.15
-      }
-
-    ]
-
-  },
-
-  options: {
-
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false,
-
-    interaction: {
-      mode: "index",
-      intersect: false
-    },
-
-    plugins: {
-
-      legend: {
-        labels: {
-          color: "#eef4ff",
-          usePointStyle: true
-        }
-      }
-
-    },
-
-    scales: {
-
-      x: {
-        title: {
-          display: true,
-          text: "時間（秒）",
-          color: "#d6e4f5"
-        },
-        ticks: {
-          color: "#b7c9df",
-          maxTicksLimit: 10
-        },
-        grid: {
-          color: "rgba(220,235,255,0.10)"
-        }
-      },
-
-      y: {
-        title: {
-          display: true,
-          text: "加速度（m/s²）",
-          color: "#d6e4f5"
-        },
-        ticks: {
-          color: "#b7c9df"
-        },
-        grid: {
-          color: "rgba(220,235,255,0.10)"
-        }
-      }
-
-    }
-
-  }
-
-});
-
-
-// MQTT 狀態顯示
-function setStatus(text, connected = false) {
-
-  $("status").textContent = text;
-
-  $("status").classList.toggle(
-    "connected",
-    connected
-  );
+  mqttStatus.textContent = message;
+  mqttStatus.style.background = color;
 
 }
 
 
-// MQTT 連線
-function connectMQTT() {
+// =======================================
+// 2. 建立 Chart.js 圖表
+// =======================================
 
-  if (typeof mqtt === "undefined") {
+const ctx = document
+  .getElementById("accelerationChart")
+  .getContext("2d");
 
-    setStatus("MQTT.js 載入失敗");
+let accelerationChart = null;
+
+function createChart() {
+
+  if (typeof Chart === "undefined") {
+
+    dataStatus.textContent =
+      "❌ Chart.js 載入失敗，請檢查網路";
+
     return;
 
   }
 
-  if (mqttClient) {
-    mqttClient.end(true);
-  }
+  accelerationChart = new Chart(ctx, {
 
-  setStatus("連線中...");
+    type: "line",
 
-  mqttClient = mqtt.connect(BROKER, {
+    data: {
 
-    clientId:
-      "pc_accel_" +
-      Math.random().toString(16).slice(2, 10),
+      labels: [],
 
-    clean: true,
-    connectTimeout: 10000,
-    reconnectPeriod: 3000,
-    keepalive: 30
+      datasets: [
+
+        {
+          label: "X 軸",
+          data: [],
+          borderColor: "#ff6384",
+          backgroundColor: "rgba(255,99,132,0.1)",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.2
+        },
+
+        {
+          label: "Y 軸",
+          data: [],
+          borderColor: "#36a2eb",
+          backgroundColor: "rgba(54,162,235,0.1)",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.2
+        },
+
+        {
+          label: "Z 軸",
+          data: [],
+          borderColor: "#4bc0c0",
+          backgroundColor: "rgba(75,192,192,0.1)",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.2
+        },
+
+        {
+          label: "總加速度",
+          data: [],
+          borderColor: "#ffcd56",
+          backgroundColor: "rgba(255,205,86,0.1)",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.2
+        }
+
+      ]
+
+    },
+
+    options: {
+
+      responsive: true,
+
+      maintainAspectRatio: false,
+
+      animation: false,
+
+      interaction: {
+        intersect: false,
+        mode: "index"
+      },
+
+      plugins: {
+
+        legend: {
+          labels: {
+            color: "#ffffff"
+          }
+        }
+
+      },
+
+      scales: {
+
+        x: {
+          ticks: {
+            color: "#b6c4da",
+            maxTicksLimit: 8
+          },
+
+          grid: {
+            color: "rgba(255,255,255,0.08)"
+          }
+        },
+
+        y: {
+          title: {
+            display: true,
+            text: "加速度 m/s²",
+            color: "#ffffff"
+          },
+
+          ticks: {
+            color: "#b6c4da"
+          },
+
+          grid: {
+            color: "rgba(255,255,255,0.08)"
+          }
+        }
+
+      }
+
+    }
 
   });
 
+}
 
-  // 成功連線
-  mqttClient.on("connect", function() {
+createChart();
 
-    setStatus("已連線，訂閱中...");
 
-    mqttClient.subscribe(TOPIC, { qos: 0 }, function(error) {
+// =======================================
+// 3. 時間格式
+// =======================================
+
+function formatTime(timestamp) {
+
+  const date = timestamp
+    ? new Date(timestamp)
+    : new Date();
+
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+
+  return date.toLocaleString("zh-TW", {
+    hour12: false
+  });
+
+}
+
+function formatChartTime(timestamp) {
+
+  const date = timestamp
+    ? new Date(timestamp)
+    : new Date();
+
+  if (Number.isNaN(date.getTime())) {
+    return new Date().toLocaleTimeString("zh-TW");
+  }
+
+  const time = date.toLocaleTimeString("zh-TW", {
+    hour12: false
+  });
+
+  const ms = String(date.getMilliseconds()).padStart(3, "0");
+
+  return time + "." + ms;
+
+}
+
+
+// =======================================
+// 4. 更新數值與圖表
+// =======================================
+
+function updateAcceleration(data) {
+
+  const x = Number(data.x);
+  const y = Number(data.y);
+  const z = Number(data.z);
+
+  // 避免空值或錯誤資料
+  if (
+    data.x === null ||
+    data.y === null ||
+    data.z === null ||
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(z)
+  ) {
+
+    console.warn("收到無效加速度資料：", data);
+    return;
+
+  }
+
+  let total = Number(data.total);
+
+  if (!Number.isFinite(total)) {
+
+    total = Math.sqrt(
+      x*x + y*y + z*z
+    );
+
+  }
+
+  // 顯示數值
+  document.getElementById("x").textContent =
+    x.toFixed(2);
+
+  document.getElementById("y").textContent =
+    y.toFixed(2);
+
+  document.getElementById("z").textContent =
+    z.toFixed(2);
+
+  document.getElementById("total").textContent =
+    total.toFixed(2);
+
+  // 顯示裝置 ID
+  document.getElementById("deviceId").textContent =
+    data.device_id || "phone01";
+
+  // 顯示時間
+  document.getElementById("updateTime").textContent =
+    formatTime(data.timestamp);
+
+  dataStatus.textContent =
+    "✅ 正在接收手機加速度資料";
+
+  lastMessageTime = Date.now();
+
+  // 更新折線圖
+  if (!accelerationChart) return;
+
+  const timeLabel = formatChartTime(data.timestamp);
+
+  const chart = accelerationChart;
+
+  chart.data.labels.push(timeLabel);
+
+  chart.data.datasets[0].data.push(x);
+  chart.data.datasets[1].data.push(y);
+  chart.data.datasets[2].data.push(z);
+  chart.data.datasets[3].data.push(total);
+
+  // 只保留最新 100 筆
+  while (chart.data.labels.length > 100) {
+
+    chart.data.labels.shift();
+
+    chart.data.datasets.forEach(dataset => {
+      dataset.data.shift();
+    });
+
+  }
+
+  chart.update("none");
+
+}
+
+
+// =======================================
+// 5. MQTT 連線
+// =======================================
+
+function connectMQTT() {
+
+  if (typeof mqtt === "undefined") {
+
+    setMQTTStatus("MQTT 程式載入失敗", "#803737");
+    return;
+
+  }
+
+  mqttClient = mqtt.connect(MQTT_URL, {
+
+    clientId: "pc_accel_" + Math.random().toString(16).slice(2),
+
+    clean: true,
+
+    connectTimeout: 10000,
+
+    reconnectPeriod: 3000
+
+  });
+
+  mqttClient.on("connect", () => {
+
+    setMQTTStatus("✅ MQTT 已連線", "#176b50");
+
+    mqttClient.subscribe(TOPIC, (error) => {
 
       if (error) {
 
-        setStatus("訂閱失敗");
+        console.error("訂閱失敗：", error);
+
+        setMQTTStatus("訂閱主題失敗", "#803737");
 
       } else {
 
-        setStatus("已連線並訂閱資料", true);
+        console.log("已訂閱主題：", TOPIC);
 
       }
 
@@ -406,35 +561,32 @@ function connectMQTT() {
 
   });
 
+  mqttClient.on("reconnect", () => {
 
-  // 重新連線
-  mqttClient.on("reconnect", function() {
+    setMQTTStatus("MQTT 正在重新連線...", "#80642b");
 
-    setStatus("重新連線中...");
+  });
+
+  mqttClient.on("offline", () => {
+
+    setMQTTStatus("MQTT 已離線", "#803737");
+
+  });
+
+  mqttClient.on("error", (error) => {
+
+    console.error("MQTT 錯誤：", error);
+
+    setMQTTStatus("MQTT 發生錯誤", "#803737");
 
   });
 
 
-  // 連線中斷
-  mqttClient.on("close", function() {
+  // =====================================
+  // 6. 接收手機資料
+  // =====================================
 
-    setStatus("連線中斷");
-
-  });
-
-
-  // 錯誤
-  mqttClient.on("error", function(error) {
-
-    setStatus("連線錯誤");
-
-    console.error(error);
-
-  });
-
-
-  // 收到手機資料
-  mqttClient.on("message", function(topic, payload) {
+  mqttClient.on("message", (topic, payload) => {
 
     if (topic !== TOPIC) return;
 
@@ -442,76 +594,13 @@ function connectMQTT() {
 
       const data = JSON.parse(payload.toString());
 
-      const x = Number(data.x);
-      const y = Number(data.y);
-      const z = Number(data.z);
-
-      if (![x, y, z].every(Number.isFinite)) {
-        return;
+      if (!data || typeof data !== "object") {
+        throw new Error("資料格式不是物件");
       }
 
-      // 合成加速度
-      const receivedTotal = Number(data.total ?? data.magnitude);
+      updateAcceleration(data);
 
-      const total = Number.isFinite(receivedTotal)
-        ? receivedTotal
-        : Math.sqrt(x*x + y*y + z*z);
-
-
-      // 更新數字
-      $("x").textContent = x.toFixed(2);
-      $("y").textContent = y.toFixed(2);
-      $("z").textContent = z.toFixed(2);
-      $("total").textContent = total.toFixed(2);
-
-
-      // 計算時間
-      const timestamp = Number(data.timestamp) || Date.now();
-
-      if (firstTimestamp === null) {
-        firstTimestamp = timestamp;
-      }
-
-      const seconds = (timestamp - firstTimestamp) / 1000;
-
-      const label = seconds.toFixed(1);
-
-
-      // 加入圖表資料
-      chart.data.labels.push(label);
-
-      chart.data.datasets[0].data.push(x);
-      chart.data.datasets[1].data.push(y);
-      chart.data.datasets[2].data.push(z);
-      chart.data.datasets[3].data.push(total);
-
-
-      // 只保留最近 100 筆
-      while (chart.data.labels.length > MAX_POINTS) {
-
-        chart.data.labels.shift();
-
-        chart.data.datasets.forEach(dataset => {
-          dataset.data.shift();
-        });
-
-      }
-
-
-      // 更新圖表
-      chart.update("none");
-
-
-      // 更新訊息數量
-      messageCount++;
-
-      $("messageCount").textContent = messageCount;
-
-      $("lastReceived").textContent =
-        new Date(timestamp).toLocaleTimeString();
-
-
-    } catch(error) {
+    } catch (error) {
 
       console.error("資料解析錯誤：", error);
 
@@ -521,26 +610,27 @@ function connectMQTT() {
 
 }
 
-
-// 重新連線按鈕
-$("reconnectButton").addEventListener(
-  "click",
-  connectMQTT
-);
+connectMQTT();
 
 
-// 關閉網頁時中斷 MQTT
-window.addEventListener("beforeunload", function() {
+// =======================================
+// 7. 檢查資料是否中斷
+// =======================================
 
-  if (mqttClient) {
-    mqttClient.end(true);
+setInterval(() => {
+
+  if (lastMessageTime === 0) return;
+
+  const elapsed = Date.now() - lastMessageTime;
+
+  if (elapsed > 3000) {
+
+    dataStatus.textContent =
+      "⚠️ 超過 3 秒沒有收到新的加速度資料";
+
   }
 
-});
-
-
-// 開啟網頁自動連線
-connectMQTT();
+}, 1000);
 
 </script>
 
