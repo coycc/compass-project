@@ -2,115 +2,121 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>手機加速度與計步器</title>
-<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>手機加速度與計步器</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
-<style>
-* { box-sizing: border-box; }
+  <style>
+    * { box-sizing: border-box; }
 
-body {
-  margin: 0;
-  padding: 20px;
-  font-family: Arial, "Noto Sans TC", sans-serif;
-  background: #101827;
-  color: white;
-}
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, "Noto Sans TC", sans-serif;
+      background: #101827;
+      color: white;
+    }
 
-.container { max-width: 520px; margin: auto; }
-h1 { text-align: center; font-size: 25px; }
+    .container {
+      max-width: 520px;
+      margin: auto;
+    }
 
-.card {
-  background: #1d2a40;
-  padding: 18px;
-  border-radius: 16px;
-  margin-bottom: 15px;
-}
+    h1 { text-align: center; font-size: 25px; }
 
-.status {
-  padding: 10px;
-  border-radius: 8px;
-  background: #34445e;
-  text-align: center;
-}
+    .card {
+      background: #1d2a40;
+      padding: 18px;
+      border-radius: 16px;
+      margin-bottom: 15px;
+    }
 
-.steps {
-  text-align: center;
-  font-size: 70px;
-  font-weight: bold;
-  color: #43e0a1;
-  margin: 10px 0;
-}
+    .status {
+      padding: 10px;
+      border-radius: 8px;
+      background: #34445e;
+      text-align: center;
+    }
 
-.accel-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
+    .steps {
+      text-align: center;
+      font-size: 70px;
+      font-weight: bold;
+      color: #43e0a1;
+      margin: 10px 0;
+    }
 
-.accel-box {
-  background: #293b58;
-  padding: 12px 5px;
-  text-align: center;
-  border-radius: 10px;
-}
+    .accel-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
 
-.accel-value {
-  display: block;
-  font-size: 22px;
-  font-weight: bold;
-  margin-top: 8px;
-  color: #73c7ff;
-  overflow-wrap: anywhere;
-}
+    .accel-box {
+      background: #293b58;
+      padding: 12px 5px;
+      text-align: center;
+      border-radius: 10px;
+    }
 
-button {
-  border: none;
-  border-radius: 10px;
-  padding: 14px;
-  font-size: 17px;
-  font-weight: bold;
-  cursor: pointer;
-  width: 100%;
-  margin-top: 9px;
-}
+    .accel-value {
+      display: block;
+      font-size: 22px;
+      font-weight: bold;
+      margin-top: 8px;
+      color: #73c7ff;
+      overflow-wrap: anywhere;
+    }
 
-.start { background: #20bb80; color: white; }
-.stop { background: #e45d5d; color: white; }
-.reset { background: #e6a33b; color: white; }
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 14px;
+      font-size: 17px;
+      font-weight: bold;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 9px;
+    }
 
-input[type="range"] { width: 100%; }
+    .start { background: #20bb80; color: white; }
+    .stop { background: #e45d5d; color: white; }
+    .reset { background: #e6a33b; color: white; }
 
-input[type="text"] {
-  width: 100%;
-  padding: 12px;
-  border-radius: 8px;
-  border: none;
-  font-size: 16px;
-  margin-top: 8px;
-}
+    input[type="range"] { width: 100%; }
 
-.small {
-  font-size: 13px;
-  color: #c3cee0;
-  line-height: 1.6;
-}
+    input[type="text"] {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      border: none;
+      font-size: 16px;
+      margin-top: 8px;
+    }
 
-.value { color: #43e0a1; font-weight: bold; }
-</style>
+    .small {
+      font-size: 13px;
+      color: #c3cee0;
+      line-height: 1.6;
+    }
+
+    .value {
+      color: #43e0a1;
+      font-weight: bold;
+    }
+  </style>
 </head>
 
 <body>
-
 <div class="container">
 
   <h1>📱 手機加速度與計步器</h1>
 
   <div class="card">
     <div class="status" id="mqttStatus">MQTT 連線中...</div>
-    <p class="small">步數主題：nutc/im/1411331040/steps</p>
-    <p class="small">加速度主題：classroom/accelerometer/phone01</p>
+    <p class="small">步數 Topic：nutc/im/1411331040/steps</p>
+    <p class="small">加速度 Topic：classroom/accelerometer/phone01</p>
   </div>
 
   <div class="card">
@@ -168,14 +174,14 @@ input[type="text"] {
     >
 
     <p class="small">
-      數值越大越敏感，越容易偵測到步伐。
+      數值越大，越容易偵測到步伐。
     </p>
   </div>
 
   <div class="card">
     <h2>🎮 操作</h2>
 
-    <button class="start" id="startBtn">▶ 開始計步</button>
+    <button class="start" id="startBtn">▶ 開始感測與計步</button>
     <button class="stop" id="stopBtn">⏸ 停止計步</button>
     <button class="reset" id="resetBtn">↻ 步數歸零</button>
 
@@ -185,17 +191,16 @@ input[type="text"] {
 </div>
 
 <script>
-
 // ========================================
 // 1. MQTT 設定
 // ========================================
 
 const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
-
 const ACCEL_TOPIC = "classroom/accelerometer/phone01";
 const STEP_TOPIC = "nutc/im/1411331040/steps";
 
 let mqttClient = null;
+
 const pendingMessages = [];
 const MAX_PENDING = 200;
 
@@ -222,7 +227,6 @@ function connectMQTT() {
   mqttClient.on("connect", () => {
     setMqttStatus("✅ MQTT 已連線", "#176b50");
 
-    // 重新連線後補發暫存事件
     while (pendingMessages.length > 0 && mqttClient.connected) {
       const item = pendingMessages.shift();
       mqttClient.publish(item.topic, item.message);
@@ -237,7 +241,7 @@ function connectMQTT() {
     setMqttStatus("MQTT 離線，重要事件暫存中", "#803737");
   });
 
-  mqttClient.on("error", (error) => {
+  mqttClient.on("error", error => {
     console.error("MQTT 錯誤：", error);
     setMqttStatus("MQTT 連線發生錯誤", "#803737");
   });
@@ -249,7 +253,7 @@ function getDeviceId() {
   return document.getElementById("deviceId").value.trim() || "phone01";
 }
 
-// 發布重要步數事件
+// 發布重要步數事件；離線時暫存
 function publishImportant(topic, data) {
   const message = JSON.stringify(data);
 
@@ -260,14 +264,11 @@ function publishImportant(topic, data) {
       pendingMessages.shift();
     }
 
-    pendingMessages.push({
-      topic: topic,
-      message: message
-    });
+    pendingMessages.push({ topic, message });
   }
 }
 
-// 發布加速度
+// 發布加速度資料
 function publishAcceleration(x, y, z, total) {
   if (!mqttClient || !mqttClient.connected) return;
 
@@ -284,7 +285,7 @@ function publishAcceleration(x, y, z, total) {
   mqttClient.publish(ACCEL_TOPIC, JSON.stringify(data));
 }
 
-// 發布步數事件
+// 發布步數資料
 function publishStep(eventType) {
   publishImportant(STEP_TOPIC, {
     steps: steps,
@@ -293,7 +294,6 @@ function publishStep(eventType) {
     event_type: eventType
   });
 }
-
 
 // ========================================
 // 2. 計步器變數
@@ -346,9 +346,8 @@ function validXYZ(value) {
     Number.isFinite(value.z);
 }
 
-
 // ========================================
-// 3. 修正後的手機感測器與計步函數
+// 3. 手機感測器與計步函數
 // ========================================
 
 function handleMotion(event) {
@@ -356,12 +355,8 @@ function handleMotion(event) {
 
   const now = Date.now();
 
-  // 先取得時間差，再更新時間
   const dt = lastSensorTime
-    ? Math.max(
-        0.005,
-        Math.min((now - lastSensorTime) / 1000, 0.2)
-      )
+    ? Math.max(0.005, Math.min((now - lastSensorTime) / 1000, 0.2))
     : 0.02;
 
   lastSensorTime = now;
@@ -377,14 +372,12 @@ function handleMotion(event) {
     y = event.acceleration.y;
     z = event.acceleration.z;
 
-    sensorStatus.textContent =
-      "✅ 使用手機線性加速度（不含重力）";
+    sensorStatus.textContent = "✅ 使用手機線性加速度（不含重力）";
 
   } else if (validXYZ(event.accelerationIncludingGravity)) {
 
     // 沒有線性加速度時，估算重力並扣除
     const raw = event.accelerationIncludingGravity;
-
     const gravityAlpha = 1 - Math.exp(-dt / 0.8);
 
     if (gravity === null) {
@@ -403,12 +396,10 @@ function handleMotion(event) {
     y = raw.y - gravity.y;
     z = raw.z - gravity.z;
 
-    sensorStatus.textContent =
-      "✅ 已使用估算方式扣除重力";
+    sensorStatus.textContent = "✅ 已使用估算方式扣除重力";
 
   } else {
-    sensorStatus.textContent =
-      "❌ 感測器沒有提供有效的 XYZ 資料";
+    sensorStatus.textContent = "❌ 感測器沒有提供有效的 XYZ 資料";
     return;
   }
 
@@ -420,16 +411,15 @@ function handleMotion(event) {
   if (Math.abs(z) < DEAD_ZONE) z = 0;
 
   // 計算線性加速度大小
-  const magnitude = Math.sqrt(x*x + y*y + z*z);
+  const magnitude = Math.sqrt(x * x + y * y + z * z);
 
-  // 更新畫面
+  // 更新手機畫面
   document.getElementById("ax").textContent = x.toFixed(2);
   document.getElementById("ay").textContent = y.toFixed(2);
   document.getElementById("az").textContent = z.toFixed(2);
-  document.getElementById("magnitude").textContent =
-    magnitude.toFixed(2);
+  document.getElementById("magnitude").textContent = magnitude.toFixed(2);
 
-  // 每 100ms 傳送加速度
+  // 每 100ms 傳送一次加速度
   if (now - lastAccelPublish >= 100) {
     publishAcceleration(x, y, z, magnitude);
     lastAccelPublish = now;
@@ -460,7 +450,7 @@ function handleMotion(event) {
 
   const threshold = getThreshold();
 
-  // 偵測到一個明顯的正向波峰
+  // 偵測明顯的正向波峰
   if (
     smoothSignal > threshold &&
     armed &&
@@ -476,12 +466,11 @@ function handleMotion(event) {
     publishStep("step");
   }
 
-  // 加速度變化回落，重新準備偵測下一步
+  // 加速度回落，準備偵測下一步
   if (smoothSignal < threshold * 0.2) {
     armed = true;
   }
 }
-
 
 // ========================================
 // 4. 開始計步
@@ -505,8 +494,7 @@ async function startTracking() {
   try {
     // iPhone Safari 必須由按鈕觸發權限請求
     if (typeof DeviceMotionEvent.requestPermission === "function") {
-      const permission =
-        await DeviceMotionEvent.requestPermission();
+      const permission = await DeviceMotionEvent.requestPermission();
 
       if (permission !== "granted") {
         alert("請允許動作與方向感測器權限。");
@@ -523,23 +511,18 @@ async function startTracking() {
     lastSensorTime = 0;
     lastSensorEventTime = 0;
     lastAccelPublish = 0;
-
     armed = true;
 
-    window.addEventListener(
-      "devicemotion",
-      handleMotion,
-      true
-    );
-
     tracking = true;
+
+    window.addEventListener("devicemotion", handleMotion, true);
 
     trackingStatus.textContent = "目前狀態：計步中";
     sensorStatus.textContent = "等待手機感測器資料...";
 
     publishStep("start");
 
-    // 每 5 秒自動發布目前步數
+    // 每 5 秒發布目前步數
     clearInterval(publishTimer);
 
     publishTimer = setInterval(() => {
@@ -548,7 +531,7 @@ async function startTracking() {
       }
     }, 5000);
 
-    // 檢查是否有收到感測器資料
+    // 檢查是否收到感測器資料
     clearTimeout(sensorWarningTimer);
 
     sensorWarningTimer = setTimeout(() => {
@@ -567,7 +550,6 @@ async function startTracking() {
   }
 }
 
-
 // ========================================
 // 5. 停止計步
 // ========================================
@@ -577,11 +559,7 @@ function stopTracking() {
 
   tracking = false;
 
-  window.removeEventListener(
-    "devicemotion",
-    handleMotion,
-    true
-  );
+  window.removeEventListener("devicemotion", handleMotion, true);
 
   clearInterval(publishTimer);
   clearTimeout(sensorWarningTimer);
@@ -591,7 +569,6 @@ function stopTracking() {
 
   publishStep("stop");
 }
-
 
 // ========================================
 // 6. 步數歸零
@@ -609,7 +586,6 @@ function resetSteps() {
 
   publishStep("reset");
 }
-
 
 // ========================================
 // 7. 按鈕
