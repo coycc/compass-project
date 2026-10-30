@@ -1,0 +1,448 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>地震警報儀－電腦監控</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 25px;
+  font-family: Arial, "Noto Sans TC", sans-serif;
+  background: #101827;
+  color: white;
+}
+
+.container {
+  max-width: 950px;
+  margin: auto;
+}
+
+h1 { text-align: center; }
+
+.card {
+  background: #1d2a40;
+  padding: 22px;
+  border-radius: 15px;
+  margin-bottom: 18px;
+}
+
+.status {
+  padding: 13px;
+  text-align: center;
+  background: #34445e;
+  border-radius: 9px;
+}
+
+.alarm {
+  padding: 35px 10px;
+  text-align: center;
+  border: 3px solid #27875c;
+  border-radius: 15px;
+  background: #173d32;
+}
+
+.alarm.active {
+  border-color: #ff3333;
+  background: #781c27;
+  animation: flash 0.5s infinite alternate;
+}
+
+.alarm-title {
+  font-size: 35px;
+  font-weight: bold;
+}
+
+.alarm-subtitle {
+  font-size: 18px;
+  margin-top: 15px;
+}
+
+@keyframes flash {
+  from { background: #781c27; }
+  to { background: #bc2020; }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.box {
+  background: #293b58;
+  border-radius: 10px;
+  padding: 18px 5px;
+  text-align: center;
+}
+
+.value {
+  display: block;
+  font-size: 30px;
+  font-weight: bold;
+  color: #73c7ff;
+  margin-top: 10px;
+}
+
+.total {
+  font-size: 43px;
+  color: #43e0a1;
+  font-weight: bold;
+  text-align: center;
+  margin: 15px;
+}
+
+.small {
+  color: #bdc9db;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 9px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-top: 10px;
+  background: #44628b;
+  color: white;
+}
+
+@media (max-width: 600px) {
+  body { padding: 12px; }
+  .grid { grid-template-columns: 1fr; }
+  .value { font-size: 24px; }
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<h1>🚨 地震警報儀－電腦監控</h1>
+
+<div class="card">
+  <div class="status" id="mqttStatus">MQTT 連線中...</div>
+  <p class="small">監測 Topic：classroom/earthquake/phone01</p>
+</div>
+
+<div class="card">
+  <h2>🚨 地震警報狀態</h2>
+
+  <div class="alarm" id="alarmPanel">
+    <div class="alarm-title" id="alarmStatus">🟢 目前正常</div>
+    <div class="alarm-subtitle" id="alarmMessage">
+      等待手機感測器資料
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>📊 即時加速度資料</h2>
+
+  <div class="grid">
+    <div class="box">
+      X 軸
+      <span class="value" id="x">0.00</span>
+    </div>
+
+    <div class="box">
+      Y 軸
+      <span class="value" id="y">0.00</span>
+    </div>
+
+    <div class="box">
+      Z 軸
+      <span class="value" id="z">0.00</span>
+    </div>
+  </div>
+
+  <p style="text-align:center">總加速度</p>
+  <div class="total" id="total">0.00 m/s²</div>
+
+  <p class="small">
+    警報門檻：0.80 m/s²
+  </p>
+</div>
+
+<div class="card">
+  <h2>📋 裝置資訊</h2>
+
+  <p>裝置 ID：<strong id="deviceId">尚未收到</strong></p>
+  <p>資料類型：<strong id="dataType">尚未收到</strong></p>
+  <p>最後更新時間：<strong id="lastTime">尚未收到</strong></p>
+  <p>連線狀態：<strong id="sensorStatus">等待手機資料</strong></p>
+</div>
+
+<div class="card">
+  <h2>🔊 警報聲音</h2>
+
+  <button id="soundBtn">🔊 啟用電腦警報聲</button>
+
+  <p class="small">
+    請先按下按鈕授權瀏覽器播放聲音，發生警報時電腦才會播放警報音。
+  </p>
+</div>
+
+</div>
+
+<script>
+// =====================================
+// 1. MQTT 設定
+// =====================================
+
+const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
+const TOPIC = "classroom/earthquake/phone01";
+
+const mqttStatus = document.getElementById("mqttStatus");
+
+let mqttClient = null;
+let sensorConnected = false;
+let alarmActive = false;
+
+function connectMQTT() {
+  mqttClient = mqtt.connect(MQTT_URL, {
+    clientId: "earthquake_pc_" +
+      Math.random().toString(16).slice(2),
+    clean: true,
+    connectTimeout: 10000,
+    reconnectPeriod: 3000
+  });
+
+  mqttClient.on("connect", () => {
+    mqttStatus.textContent = "✅ MQTT 已連線";
+    mqttStatus.style.background = "#176b50";
+
+    mqttClient.subscribe(TOPIC, error => {
+      if (error) console.error(error);
+    });
+  });
+
+  mqttClient.on("reconnect", () => {
+    mqttStatus.textContent = "正在重新連線...";
+  });
+
+  mqttClient.on("offline", () => {
+    mqttStatus.textContent = "MQTT 離線";
+    mqttStatus.style.background = "#803737";
+  });
+
+  mqttClient.on("error", error => {
+    console.error(error);
+    mqttStatus.textContent = "MQTT 連線錯誤";
+  });
+
+  mqttClient.on("message", (topic, payload) => {
+    if (topic !== TOPIC) return;
+
+    try {
+      const data = JSON.parse(payload.toString());
+      handleData(data);
+    } catch (error) {
+      console.error("資料格式錯誤", error);
+    }
+  });
+}
+
+// =====================================
+// 2. 警報畫面
+// =====================================
+
+function updateAlarm(active, total) {
+  const panel = document.getElementById("alarmPanel");
+  const status = document.getElementById("alarmStatus");
+  const message = document.getElementById("alarmMessage");
+
+  if (active) {
+    panel.classList.add("active");
+    status.textContent = "🚨 偵測到強烈震動！";
+    message.textContent =
+      "加速度：" + total.toFixed(2) + " m/s²，請注意安全！";
+  } else {
+    panel.classList.remove("active");
+    status.textContent = "🟢 目前正常";
+    message.textContent = "尚未偵測到超過門檻的震動";
+  }
+}
+
+// =====================================
+// 3. 電腦警報音
+// =====================================
+
+let audioContext = null;
+let soundEnabled = false;
+let soundTimer = null;
+
+async function enableSound() {
+  const AudioContextClass =
+    window.AudioContext || window.webkitAudioContext;
+
+  if (!AudioContextClass) {
+    alert("此瀏覽器不支援 Web Audio。");
+    return;
+  }
+
+  if (!audioContext) {
+    audioContext = new AudioContextClass();
+  }
+
+  if (audioContext.state === "suspended") {
+    await audioContext.resume();
+  }
+
+  soundEnabled = true;
+
+  document.getElementById("soundBtn").textContent =
+    "🔊 電腦警報聲已啟用";
+
+  if (alarmActive) startAlarmSound();
+}
+
+function beep() {
+  if (!soundEnabled || !audioContext) return;
+
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+
+  oscillator.type = "square";
+  oscillator.frequency.value = 900;
+
+  gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+  gain.gain.exponentialRampToValueAtTime(
+    0.15, audioContext.currentTime + 0.03
+  );
+  gain.gain.exponentialRampToValueAtTime(
+    0.0001, audioContext.currentTime + 0.25
+  );
+
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+
+  oscillator.start();
+  oscillator.stop(audioContext.currentTime + 0.27);
+}
+
+function startAlarmSound() {
+  if (!soundEnabled || soundTimer) return;
+
+  beep();
+  soundTimer = setInterval(beep, 600);
+}
+
+function stopAlarmSound() {
+  clearInterval(soundTimer);
+  soundTimer = null;
+}
+
+// =====================================
+// 4. 更新電腦資料
+// =====================================
+
+function formatTime(timestamp) {
+  const date = timestamp ? new Date(timestamp) : new Date();
+
+  if (Number.isNaN(date.getTime())) return "--";
+
+  return date.toLocaleString("zh-TW", {
+    hour12: false
+  });
+}
+
+function handleData(data) {
+  const type = data.type || "reading";
+
+  document.getElementById("deviceId").textContent =
+    data.device_id || "--";
+
+  document.getElementById("dataType").textContent = type;
+
+  document.getElementById("lastTime").textContent =
+    formatTime(data.timestamp);
+
+  sensorConnected = true;
+
+  document.getElementById("sensorStatus").textContent =
+    "✅ 已接收手機資料";
+
+  // 更新 XYZ
+  const x = Number(data.x) || 0;
+  const y = Number(data.y) || 0;
+  const z = Number(data.z) || 0;
+
+  let total = Number(data.total);
+
+  if (!Number.isFinite(total)) {
+    total = Math.sqrt(x*x + y*y + z*z);
+  }
+
+  document.getElementById("x").textContent = x.toFixed(2);
+  document.getElementById("y").textContent = y.toFixed(2);
+  document.getElementById("z").textContent = z.toFixed(2);
+
+  document.getElementById("total").textContent =
+    total.toFixed(2) + " m/s²";
+
+  // 依照手機傳來的狀態同步警報
+  if (type === "stop") {
+    alarmActive = false;
+    updateAlarm(false, total);
+    stopAlarmSound();
+    document.getElementById("sensorStatus").textContent =
+      "手機已停止監測";
+    return;
+  }
+
+  const newAlarmState = data.active === true;
+
+  if (newAlarmState !== alarmActive) {
+    alarmActive = newAlarmState;
+
+    if (alarmActive) {
+      startAlarmSound();
+    } else {
+      stopAlarmSound();
+    }
+  }
+
+  updateAlarm(alarmActive, total);
+}
+
+// =====================================
+// 5. 音效按鈕及連線監控
+// =====================================
+
+document.getElementById("soundBtn")
+  .addEventListener("click", enableSound);
+
+setInterval(() => {
+  // 這裡以實際資料接收時間判斷
+  if (lastMessageAt && Date.now() - lastMessageAt > 5000) {
+    sensorConnected = false;
+
+    document.getElementById("sensorStatus").textContent =
+      "⚠️ 5 秒沒有收到手機資料";
+  }
+}, 1000);
+
+let lastMessageAt = 0;
+
+// 包裝原本資料接收，記錄最新時間
+const originalHandleData = handleData;
+handleData = function(data) {
+  lastMessageAt = Date.now();
+  originalHandleData(data);
+};
+
+connectMQTT();
+
+</script>
+</body>
+</html>
