@@ -1,0 +1,475 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>手機即時物件識別系統</title>
+
+<!-- TensorFlow.js -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+
+<!-- COCO-SSD -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 15px;
+    font-family: Arial, sans-serif;
+    background: #101827;
+    color: white;
+    text-align: center;
+}
+
+h1 {
+    font-size: 24px;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #aab8cc;
+    font-size: 14px;
+    margin-bottom: 20px;
+}
+
+.camera-container {
+    position: relative;
+    width: 100%;
+    max-width: 600px;
+    margin: auto;
+    overflow: hidden;
+    background: #000;
+    border-radius: 14px;
+}
+
+video {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.controls {
+    margin: 18px auto;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+button {
+    padding: 13px 22px;
+    border: none;
+    border-radius: 9px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+#startBtn {
+    background: #16a34a;
+    color: white;
+}
+
+#stopBtn {
+    background: #dc2626;
+    color: white;
+}
+
+button:disabled {
+    opacity: 0.45;
+}
+
+.info {
+    max-width: 600px;
+    margin: 15px auto;
+    padding: 15px;
+    background: #1e293b;
+    border-radius: 12px;
+    text-align: left;
+}
+
+.info p {
+    margin: 8px 0;
+}
+
+#status {
+    color: #facc15;
+    font-weight: bold;
+}
+
+#results {
+    margin-top: 12px;
+    line-height: 1.8;
+    color: #86efac;
+    overflow-wrap: anywhere;
+}
+
+.footer {
+    color: #94a3b8;
+    font-size: 12px;
+    margin-top: 20px;
+}
+</style>
+</head>
+
+<body>
+
+<h1>📷 即時物件識別系統</h1>
+
+<div class="subtitle">
+    TensorFlow.js + COCO-SSD
+    <br>
+    即時辨識 80 類物件
+</div>
+
+<!-- 攝影機畫面 -->
+<div class="camera-container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+</div>
+
+<!-- 操作按鈕 -->
+<div class="controls">
+    <button id="startBtn" onclick="startCamera()">
+        ▶ 開始辨識
+    </button>
+
+    <button id="stopBtn" onclick="stopCamera()" disabled>
+        ■ 停止辨識
+    </button>
+</div>
+
+<!-- 資訊區域 -->
+<div class="info">
+
+    <p>系統狀態：<span id="status">等待啟動</span></p>
+
+    <p>辨識物件數量：<span id="objectCount">0</span></p>
+
+    <p>辨識速度：<span id="fps">0</span></p>
+
+    <hr>
+
+    <strong>辨識結果：</strong>
+
+    <div id="results">
+        尚未開始辨識
+    </div>
+
+</div>
+
+<div class="footer">
+    Object Detection System | COCO-SSD
+</div>
+
+<script>
+
+// =============================
+// 取得 HTML 元素
+// =============================
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const statusText = document.getElementById("status");
+const objectCount = document.getElementById("objectCount");
+const fpsText = document.getElementById("fps");
+const results = document.getElementById("results");
+
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+
+// =============================
+// 全域變數
+// =============================
+
+let model = null;
+let stream = null;
+let running = false;
+
+const confidenceThreshold = 0.50;
+
+// =============================
+// 載入 COCO-SSD 模型
+// =============================
+
+async function loadModel() {
+
+    if (model) return;
+
+    statusText.innerText = "正在載入 AI 模型...";
+
+    model = await cocoSsd.load({
+        base: "lite_mobilenet_v2"
+    });
+
+    statusText.innerText = "AI 模型載入完成";
+}
+
+// =============================
+// 開啟手機攝影機
+// =============================
+
+async function startCamera() {
+
+    if (running) return;
+
+    try {
+
+        startBtn.disabled = true;
+
+        statusText.innerText = "正在啟動攝影機...";
+
+        // 使用後置攝影機
+        stream = await navigator.mediaDevices.getUserMedia({
+
+            video: {
+                facingMode: { ideal: "environment" },
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+
+            audio: false
+
+        });
+
+        video.srcObject = stream;
+
+        await video.play();
+
+        // 等待影片尺寸準備完成
+        if (!video.videoWidth) {
+            await new Promise(resolve => {
+                video.onloadedmetadata = resolve;
+            });
+        }
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        // 載入模型
+        await loadModel();
+
+        running = true;
+
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+
+        statusText.innerText = "正在即時辨識";
+
+        // 開始辨識
+        detectObjects();
+
+    } catch (error) {
+
+        console.error(error);
+
+        statusText.innerText =
+            "啟動失敗：" + error.message;
+
+        stopCamera();
+
+    }
+}
+
+// =============================
+// 即時物件辨識
+// =============================
+
+async function detectObjects() {
+
+    while (running) {
+
+        try {
+
+            const startTime = performance.now();
+
+            // 使用 COCO-SSD 偵測物件
+            const predictions = await model.detect(video);
+
+            if (!running) break;
+
+            // 清除舊畫面
+            ctx.clearRect(
+                0,
+                0,
+                canvas.width,
+                canvas.height
+            );
+
+            // 篩選信心分數
+            const detected = predictions.filter(
+                item => item.score >= confidenceThreshold
+            );
+
+            // 更新數量
+            objectCount.innerText = detected.length;
+
+            // 繪製辨識結果
+            drawPredictions(detected);
+
+            // 顯示辨識清單
+            showResults(detected);
+
+            // 計算辨識時間
+            const elapsed = performance.now() - startTime;
+
+            fpsText.innerText =
+                (1000 / Math.max(elapsed, 1)).toFixed(1) + " FPS";
+
+        } catch (error) {
+
+            console.error("辨識錯誤：", error);
+
+            statusText.innerText = "辨識發生錯誤";
+
+            break;
+        }
+
+        // 稍微間隔，避免過度占用手機資源
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+}
+
+// =============================
+// 畫出物件方框與文字
+// =============================
+
+function drawPredictions(predictions) {
+
+    predictions.forEach(prediction => {
+
+        const [x, y, width, height] = prediction.bbox;
+
+        const name = prediction.class;
+
+        const score = (prediction.score * 100).toFixed(1);
+
+        // 方框
+        ctx.strokeStyle = "#00ff66";
+        ctx.lineWidth = Math.max(3, canvas.width / 250);
+
+        ctx.strokeRect(x, y, width, height);
+
+        // 標籤文字
+        const label = name + " " + score + "%";
+
+        const fontSize = Math.max(16, canvas.width / 35);
+
+        ctx.font = "bold " + fontSize + "px Arial";
+
+        const textWidth = ctx.measureText(label).width;
+
+        // 標籤背景
+        ctx.fillStyle = "#00aa55";
+
+        const labelY = Math.max(fontSize + 8, y);
+
+        ctx.fillRect(
+            x,
+            labelY - fontSize - 8,
+            textWidth + 12,
+            fontSize + 12
+        );
+
+        // 標籤文字
+        ctx.fillStyle = "#ffffff";
+
+        ctx.fillText(
+            label,
+            x + 6,
+            labelY - 4
+        );
+
+    });
+
+}
+
+// =============================
+// 顯示辨識結果清單
+// =============================
+
+function showResults(predictions) {
+
+    if (predictions.length === 0) {
+
+        results.innerHTML = "目前沒有辨識到物件";
+
+        return;
+    }
+
+    results.innerHTML = predictions.map(item => {
+
+        const name = item.class;
+
+        const score = (item.score * 100).toFixed(1);
+
+        return `
+            <div>
+                🟢 ${name} — ${score}%
+            </div>
+        `;
+
+    }).join("");
+
+}
+
+// =============================
+// 停止攝影機與辨識
+// =============================
+
+function stopCamera() {
+
+    running = false;
+
+    // 關閉攝影機
+    if (stream) {
+
+        stream.getTracks().forEach(track => {
+            track.stop();
+        });
+
+        stream = null;
+    }
+
+    video.srcObject = null;
+
+    // 清除畫面
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    objectCount.innerText = "0";
+    fpsText.innerText = "0";
+    results.innerText = "辨識已停止";
+
+    statusText.innerText = "已停止";
+
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+
+}
+
+</script>
+
+</body>
+</html>
