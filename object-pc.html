@@ -1,0 +1,460 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PC AI 物件監控系統</title>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<style>
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    padding: 20px;
+    background: #101827;
+    color: white;
+    font-family: Arial, sans-serif;
+}
+
+h1 {
+    text-align: center;
+}
+
+.panel {
+    max-width: 1000px;
+    margin: 15px auto;
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 18px;
+    line-height: 1.9;
+}
+
+canvas {
+    display: block;
+    width: 100%;
+    max-width: 1000px;
+    height: auto;
+    margin: 15px auto;
+    background: #050b15;
+    border: 2px solid #334155;
+    border-radius: 10px;
+}
+
+.green { color: #4ade80; }
+.yellow { color: #facc15; }
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+
+th, td {
+    border-bottom: 1px solid #475569;
+    padding: 10px;
+    text-align: center;
+}
+
+th { color: #86efac; }
+
+.note {
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+</style>
+</head>
+
+<body>
+
+<h1>🖥️ PC 即時物件監控系統</h1>
+
+<div class="panel">
+
+    <div>MQTT 狀態：
+        <span id="mqttStatus" class="yellow">連線中...</span>
+    </div>
+
+    <div>手機設備：
+        <span id="device">等待手機</span>
+    </div>
+
+    <div>辨識狀態：
+        <span id="status">等待資料</span>
+    </div>
+
+    <div>物件數量：
+        <span id="count">0</span>
+    </div>
+
+    <div>最後更新：
+        <span id="lastUpdate">尚無資料</span>
+    </div>
+
+    <div>接收訊息：
+        <span id="messages">0</span>
+    </div>
+
+    <p class="note">
+        注意：此畫面只接收物件座標和辨識資訊，不接收手機照片。
+    </p>
+
+</div>
+
+<h2 style="text-align:center;">物件外框監控畫面</h2>
+
+<canvas id="canvas" width="1280" height="720"></canvas>
+
+<div class="panel">
+
+    <h2>📋 物件辨識清單</h2>
+
+    <table>
+
+        <thead>
+            <tr>
+                <th>物件名稱</th>
+                <th>信心分數</th>
+                <th>外框座標</th>
+            </tr>
+        </thead>
+
+        <tbody id="objectList">
+
+            <tr>
+                <td colspan="3">等待手機資料...</td>
+            </tr>
+
+        </tbody>
+
+    </table>
+
+</div>
+
+<script>
+
+// ============================
+// MQTT 設定
+// ============================
+
+const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+
+const TOPIC = "nutc/im/object-detection/demo01";
+
+const clientId = "object_pc_" +
+    Math.random().toString(16).slice(2, 10);
+
+// ============================
+// HTML 元素
+// ============================
+
+const canvas = document.getElementById("canvas");
+
+const ctx = canvas.getContext("2d");
+
+const mqttStatus = document.getElementById("mqttStatus");
+
+let messageCount = 0;
+
+let currentDevice = null;
+
+// ============================
+// 連接 MQTT
+// ============================
+
+const client = mqtt.connect(BROKER, {
+
+    clientId: clientId,
+
+    clean: true,
+
+    connectTimeout: 10000,
+
+    reconnectPeriod: 3000,
+
+    keepalive: 30
+
+});
+
+client.on("connect", () => {
+
+    mqttStatus.innerText = "已連線";
+
+    mqttStatus.className = "green";
+
+    console.log("MQTT connected");
+
+    // 訂閱手機端 Topic
+    client.subscribe(TOPIC, { qos: 0 }, error => {
+
+        if (error) {
+
+            console.error("訂閱失敗", error);
+
+            mqttStatus.innerText = "訂閱失敗";
+
+        } else {
+
+            console.log("Subscribed:", TOPIC);
+
+        }
+
+    });
+
+});
+
+client.on("reconnect", () => {
+
+    mqttStatus.innerText = "重新連線中...";
+
+});
+
+client.on("offline", () => {
+
+    mqttStatus.innerText = "離線";
+
+});
+
+client.on("error", error => {
+
+    console.error("MQTT error:", error);
+
+    mqttStatus.innerText = "連線錯誤";
+
+});
+
+// ============================
+// 接收 MQTT 資料
+// ============================
+
+client.on("message", (topic, message) => {
+
+    if (topic !== TOPIC) return;
+
+    try {
+
+        const data = JSON.parse(message.toString());
+
+        // 僅處理物件資料
+        messageCount++;
+
+        document.getElementById("messages").innerText =
+            messageCount;
+
+        currentDevice = data.deviceId || "未知";
+
+        document.getElementById("device").innerText =
+            currentDevice;
+
+        document.getElementById("lastUpdate").innerText =
+            new Date(data.timestamp).toLocaleTimeString();
+
+        // 手機停止
+        if (data.event === "stopped") {
+
+            document.getElementById("status").innerText =
+                "手機已停止辨識";
+
+            document.getElementById("count").innerText = 0;
+
+            clearDisplay();
+
+            return;
+
+        }
+
+        if (data.event !== "detection") return;
+
+        document.getElementById("status").innerText =
+            "即時接收中";
+
+        document.getElementById("count").innerText =
+            data.count;
+
+        // 依照手機畫面比例設定 PC 畫布
+        if (data.frameWidth > 0 && data.frameHeight > 0) {
+
+            canvas.width = data.frameWidth;
+
+            canvas.height = data.frameHeight;
+
+        }
+
+        // 繪製外框
+        drawObjects(data.objects || []);
+
+        // 顯示物件清單
+        showObjectList(data.objects || []);
+
+    } catch (error) {
+
+        console.error("資料解析失敗", error);
+
+    }
+
+});
+
+// ============================
+// 清除畫面
+// ============================
+
+function clearDisplay() {
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#94a3b8";
+
+    ctx.font = "24px Arial";
+
+    ctx.textAlign = "center";
+
+    ctx.fillText(
+        "等待手機開始辨識...",
+        canvas.width / 2,
+        canvas.height / 2
+    );
+
+    ctx.textAlign = "start";
+
+    document.getElementById("objectList").innerHTML =
+        '<tr><td colspan="3">等待手機資料...</td></tr>';
+
+}
+
+// ============================
+// 繪製 PC 物件外框
+// ============================
+
+function drawObjects(objects) {
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (objects.length === 0) {
+
+        ctx.fillStyle = "#94a3b8";
+
+        ctx.font = "24px Arial";
+
+        ctx.textAlign = "center";
+
+        ctx.fillText(
+            "目前沒有偵測到物件",
+            canvas.width / 2,
+            canvas.height / 2
+        );
+
+        ctx.textAlign = "start";
+
+        return;
+    }
+
+    objects.forEach(obj => {
+
+        const box = obj.bbox;
+
+        // 正規化座標轉換為 PC 畫布像素座標
+        const x = box.x * canvas.width;
+
+        const y = box.y * canvas.height;
+
+        const w = box.width * canvas.width;
+
+        const h = box.height * canvas.height;
+
+        const score = (obj.confidence * 100).toFixed(1);
+
+        const label = obj.name + " " + score + "%";
+
+        // 繪製方框
+        ctx.strokeStyle = "#00ff66";
+
+        ctx.lineWidth = Math.max(3, canvas.width / 400);
+
+        ctx.strokeRect(x, y, w, h);
+
+        // 標籤
+        const fontSize = Math.max(16, canvas.width / 55);
+
+        ctx.font = "bold " + fontSize + "px Arial";
+
+        const textWidth = ctx.measureText(label).width;
+
+        const labelY = Math.max(fontSize + 10, y);
+
+        ctx.fillStyle = "#00aa55";
+
+        ctx.fillRect(
+            x,
+            labelY - fontSize - 8,
+            textWidth + 12,
+            fontSize + 12
+        );
+
+        ctx.fillStyle = "white";
+
+        ctx.fillText(
+            label,
+            x + 6,
+            labelY - 4
+        );
+
+    });
+
+}
+
+// ============================
+// 顯示辨識清單
+// ============================
+
+function showObjectList(objects) {
+
+    const area = document.getElementById("objectList");
+
+    if (objects.length === 0) {
+
+        area.innerHTML =
+            '<tr><td colspan="3">目前沒有辨識到物件</td></tr>';
+
+        return;
+
+    }
+
+    area.innerHTML = objects.map(obj => {
+
+        const box = obj.bbox;
+
+        return `
+            <tr>
+                <td>${obj.name}</td>
+
+                <td>
+                    ${(obj.confidence * 100).toFixed(1)}%
+                </td>
+
+                <td>
+                    X:${box.x.toFixed(3)}
+                    Y:${box.y.toFixed(3)}
+                    W:${box.width.toFixed(3)}
+                    H:${box.height.toFixed(3)}
+                </td>
+            </tr>
+        `;
+
+    }).join("");
+
+}
+
+// ============================
+// 初始化畫面
+// ============================
+
+clearDisplay();
+
+</script>
+
+</body>
+</html>
