@@ -1,0 +1,709 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 智慧車庫自動開門系統</title>
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 20px;
+    background: #101827;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+
+h1 {
+    margin-bottom: 8px;
+}
+
+.panel {
+    max-width: 850px;
+    margin: 15px auto;
+    padding: 18px;
+    background: #1e293b;
+    border-radius: 12px;
+    text-align: left;
+    line-height: 2;
+}
+
+.status {
+    font-size: 22px;
+    font-weight: bold;
+}
+
+.green { color: #4ade80; }
+.red { color: #f87171; }
+.yellow { color: #facc15; }
+
+.garage {
+    position: relative;
+    width: 90%;
+    max-width: 600px;
+    height: 330px;
+    margin: 25px auto;
+    background: #475569;
+    border: 10px solid #64748b;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* 車庫內部 */
+.inside {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        #334155,
+        #1e293b
+    );
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 90px;
+}
+
+/* 車庫門 */
+.door {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(
+        to bottom,
+        #94a3b8 0px,
+        #94a3b8 35px,
+        #64748b 36px,
+        #64748b 40px
+    );
+    border-bottom: 5px solid #cbd5e1;
+    transition: transform 2s ease-in-out;
+    transform: translateY(0);
+    z-index: 2;
+}
+
+/* 開門動畫 */
+.door.open {
+    transform: translateY(-100%);
+}
+
+.garage-label {
+    margin-top: 12px;
+    color: #cbd5e1;
+    font-size: 14px;
+}
+
+button {
+    padding: 13px 20px;
+    margin: 6px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.openBtn {
+    background: #16a34a;
+    color: white;
+}
+
+.closeBtn {
+    background: #dc2626;
+    color: white;
+}
+
+canvas {
+    display: block;
+    width: 100%;
+    max-width: 850px;
+    height: auto;
+    margin: 20px auto;
+    background: #050b15;
+    border: 2px solid #334155;
+    border-radius: 10px;
+}
+
+.log {
+    max-height: 180px;
+    overflow-y: auto;
+    font-size: 14px;
+    color: #86efac;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+}
+
+.note {
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+</style>
+</head>
+
+<body>
+
+<h1>🚗 AI 智慧車庫自動開門系統</h1>
+<p>COCO-SSD + MQTT.js</p>
+
+<div class="panel">
+
+    <div>MQTT 狀態：
+        <span id="mqttStatus" class="yellow">連線中</span>
+    </div>
+
+    <div>手機設備：
+        <span id="device">等待連線</span>
+    </div>
+
+    <div>汽車偵測：
+        <span id="carStatus" class="yellow">尚未偵測</span>
+    </div>
+
+    <div>汽車信心分數：
+        <span id="confidence">0%</span>
+    </div>
+
+    <div>目前車庫門：
+        <span id="doorStatus" class="red">關閉</span>
+    </div>
+
+    <div>系統訊息：
+        <span id="message">等待手機資料</span>
+    </div>
+
+</div>
+
+<h2>🏠 智慧車庫模擬畫面</h2>
+
+<div class="garage">
+
+    <div class="inside">
+        🚗
+    </div>
+
+    <div id="door" class="door"></div>
+
+</div>
+
+<div class="garage-label">
+    車庫門會根據 AI 偵測結果自動開啟及關閉
+</div>
+
+<div class="panel">
+
+    <h3>🎮 手動測試</h3>
+
+    <button class="openBtn" onclick="openDoor('手動測試')">
+        手動開門
+    </button>
+
+    <button class="closeBtn" onclick="closeDoor('手動測試')">
+        手動關門
+    </button>
+
+    <p class="note">
+        手動按鈕只用來測試車庫動畫，不會控制真實車庫門。
+    </p>
+
+</div>
+
+<h2>📷 手機 AI 辨識框同步</h2>
+
+<canvas id="canvas" width="1280" height="720"></canvas>
+
+<div class="panel">
+
+    <h3>📋 系統事件紀錄</h3>
+
+    <div id="logs" class="log">
+        等待系統啟動...
+    </div>
+
+</div>
+
+<script>
+
+// =================================
+// MQTT 設定
+// =================================
+
+const BROKER =
+    "wss://broker.hivemq.com:8884/mqtt";
+
+const TOPIC =
+    "nutc/im/object-detection/demo01";
+
+const clientId =
+    "garage_pc_" +
+    Math.random().toString(16).slice(2, 10);
+
+// =================================
+// 系統設定
+// =================================
+
+const CAR_THRESHOLD = 0.70;
+
+const REQUIRED_FRAMES = 2;
+
+const CLOSE_DELAY = 5000;
+
+let doorIsOpen = false;
+
+let carDetected = false;
+
+let consecutiveCarFrames = 0;
+
+let lastCarTime = 0;
+
+let closeTimer = null;
+
+let currentDevice = "";
+
+const canvas = document.getElementById("canvas");
+
+const ctx = canvas.getContext("2d");
+
+const door = document.getElementById("door");
+
+// =================================
+// MQTT 連線
+// =================================
+
+const client = mqtt.connect(BROKER, {
+
+    clientId: clientId,
+
+    clean: true,
+
+    connectTimeout: 10000,
+
+    reconnectPeriod: 3000,
+
+    keepalive: 30
+
+});
+
+client.on("connect", () => {
+
+    setText("mqttStatus", "已連線", "green");
+
+    addLog("MQTT 連線成功");
+
+    client.subscribe(TOPIC, { qos: 0 }, error => {
+
+        if (error) {
+
+            addLog("訂閱失敗：" + error.message);
+
+        } else {
+
+            addLog("已訂閱手機 AI 辨識 Topic");
+
+        }
+
+    });
+
+});
+
+client.on("reconnect", () => {
+
+    setText("mqttStatus", "重新連線中", "yellow");
+
+});
+
+client.on("offline", () => {
+
+    setText("mqttStatus", "離線", "red");
+
+});
+
+client.on("error", error => {
+
+    console.error(error);
+
+    setText("mqttStatus", "連線錯誤", "red");
+
+});
+
+// =================================
+// MQTT 接收資料
+// =================================
+
+client.on("message", (topic, message) => {
+
+    if (topic !== TOPIC) return;
+
+    try {
+
+        const data = JSON.parse(message.toString());
+
+        if (data.event === "stopped") {
+
+            consecutiveCarFrames = 0;
+
+            carDetected = false;
+
+            clearTimeout(closeTimer);
+
+            addLog("手機停止辨識");
+
+            scheduleClose();
+
+            return;
+
+        }
+
+        if (data.event !== "detection") return;
+
+        currentDevice = data.deviceId || "未知";
+
+        setText("device", currentDevice);
+
+        if (
+            data.frameWidth > 0 &&
+            data.frameHeight > 0
+        ) {
+
+            canvas.width = data.frameWidth;
+
+            canvas.height = data.frameHeight;
+
+        }
+
+        const objects = Array.isArray(data.objects)
+            ? data.objects
+            : [];
+
+        // 更新 PC 辨識框
+        drawObjects(objects);
+
+        // 尋找汽車
+        const cars = objects.filter(obj => {
+
+            return (
+                obj.name === "car" &&
+                Number(obj.confidence) >= CAR_THRESHOLD
+            );
+
+        });
+
+        if (cars.length > 0) {
+
+            // 取信心分數最高的汽車
+            const bestCar = cars.reduce((a, b) =>
+                a.confidence > b.confidence ? a : b
+            );
+
+            handleCarDetected(bestCar.confidence);
+
+        } else {
+
+            consecutiveCarFrames = 0;
+
+            if (carDetected) {
+
+                carDetected = false;
+
+                addLog("汽車已離開偵測畫面");
+
+                setText(
+                    "carStatus",
+                    "汽車未偵測到",
+                    "yellow"
+                );
+
+                scheduleClose();
+
+            }
+
+        }
+
+    } catch (error) {
+
+        console.error("資料解析失敗", error);
+
+    }
+
+});
+
+// =================================
+// 偵測汽車
+// =================================
+
+function handleCarDetected(score) {
+
+    consecutiveCarFrames++;
+
+    lastCarTime = Date.now();
+
+    setText(
+        "carStatus",
+        "已偵測到汽車",
+        "green"
+    );
+
+    setText(
+        "confidence",
+        (score * 100).toFixed(1) + "%"
+    );
+
+    // 清除等待關門計時
+    clearTimeout(closeTimer);
+
+    // 連續達到設定次數才開門
+    if (
+        consecutiveCarFrames >= REQUIRED_FRAMES &&
+        !doorIsOpen
+    ) {
+
+        carDetected = true;
+
+        openDoor("AI 偵測到汽車");
+
+    } else {
+
+        carDetected = true;
+
+    }
+
+    if (doorIsOpen) {
+
+        setText(
+            "message",
+            "汽車正在接近，保持開門",
+            "green"
+        );
+
+    }
+
+}
+
+// =================================
+// 自動開門
+// =================================
+
+function openDoor(reason) {
+
+    clearTimeout(closeTimer);
+
+    if (doorIsOpen) return;
+
+    doorIsOpen = true;
+
+    door.classList.add("open");
+
+    setText(
+        "doorStatus",
+        "開啟中 / 已開啟",
+        "green"
+    );
+
+    setText(
+        "message",
+        reason,
+        "green"
+    );
+
+    addLog("🚪 車庫門開啟：" + reason);
+
+}
+
+// =================================
+// 自動關門
+// =================================
+
+function scheduleClose() {
+
+    clearTimeout(closeTimer);
+
+    if (!doorIsOpen) return;
+
+    setText(
+        "message",
+        "5 秒後自動關門",
+        "yellow"
+    );
+
+    closeTimer = setTimeout(() => {
+
+        if (!carDetected) {
+
+            closeDoor("汽車離開超過 5 秒");
+
+        }
+
+    }, CLOSE_DELAY);
+
+}
+
+function closeDoor(reason) {
+
+    clearTimeout(closeTimer);
+
+    carDetected = false;
+
+    consecutiveCarFrames = 0;
+
+    if (!doorIsOpen) return;
+
+    doorIsOpen = false;
+
+    door.classList.remove("open");
+
+    setText(
+        "doorStatus",
+        "關閉中 / 已關閉",
+        "red"
+    );
+
+    setText(
+        "message",
+        reason,
+        "yellow"
+    );
+
+    addLog("🚪 車庫門關閉：" + reason);
+
+}
+
+// =================================
+// 畫出物件外框
+// =================================
+
+function drawObjects(objects) {
+
+    ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+    objects.forEach(obj => {
+
+        const b = obj.bbox;
+
+        const x = b.x * canvas.width;
+
+        const y = b.y * canvas.height;
+
+        const w = b.width * canvas.width;
+
+        const h = b.height * canvas.height;
+
+        const isCar = obj.name === "car";
+
+        const score =
+            (obj.confidence * 100).toFixed(1);
+
+        const label =
+            obj.name + " " + score + "%";
+
+        ctx.strokeStyle = isCar
+            ? "#ff3333"
+            : "#00ff66";
+
+        ctx.lineWidth = 4;
+
+        ctx.strokeRect(x, y, w, h);
+
+        ctx.font = "bold 20px Arial";
+
+        const tw = ctx.measureText(label).width;
+
+        const labelY = Math.max(25, y);
+
+        ctx.fillStyle = isCar
+            ? "#dc2626"
+            : "#00aa55";
+
+        ctx.fillRect(
+            x,
+            labelY - 25,
+            tw + 12,
+            28
+        );
+
+        ctx.fillStyle = "white";
+
+        ctx.fillText(
+            label,
+            x + 6,
+            labelY - 6
+        );
+
+    });
+
+}
+
+// =================================
+// 工具函數
+// =================================
+
+function setText(id, text, color) {
+
+    const element = document.getElementById(id);
+
+    element.innerText = text;
+
+    if (color) {
+
+        element.className = color;
+
+    }
+
+}
+
+function addLog(message) {
+
+    const area = document.getElementById("logs");
+
+    const time = new Date().toLocaleTimeString();
+
+    const line = document.createElement("div");
+
+    line.textContent = "[" + time + "] " + message;
+
+    area.prepend(line);
+
+    // 最多保留 30 筆
+    while (area.children.length > 30) {
+
+        area.removeChild(area.lastChild);
+
+    }
+
+}
+
+// =================================
+// 初始畫面
+// =================================
+
+ctx.fillStyle = "#94a3b8";
+
+ctx.font = "26px Arial";
+
+ctx.textAlign = "center";
+
+ctx.fillText(
+    "等待手機 AI 辨識資料...",
+    canvas.width / 2,
+    canvas.height / 2
+);
+
+ctx.textAlign = "start";
+
+</script>
+
+</body>
+</html>
