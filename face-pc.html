@@ -4,26 +4,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PC 即時人臉辨識監控</title>
+<title>PC 人臉辨識監控</title>
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <style>
 *{box-sizing:border-box}
-body{font-family:Arial,sans-serif;margin:0;padding:18px;background:#edf2f8;color:#172033}
+body{font-family:Arial,sans-serif;background:#edf2f8;margin:0;padding:18px;color:#172033}
 main{max-width:1100px;margin:auto}
 .card{background:white;padding:17px;border-radius:14px;margin-bottom:14px;box-shadow:0 3px 12px #0001}
 h2{font-size:19px;margin:0 0 12px}
-.status{padding:12px;border-radius:9px;background:#edf4fc;margin:8px 0}
+.status{padding:12px;background:#edf4fc;border-radius:9px;margin:8px 0;overflow-wrap:anywhere}
 .layout{display:grid;grid-template-columns:2fr 1fr;gap:14px}
-.stage{width:100%;aspect-ratio:16/9;background:#101c2d;position:relative;border-radius:10px;overflow:hidden}
+.stage{width:100%;aspect-ratio:16/9;background:#101c2d;border-radius:10px;overflow:hidden}
 canvas{width:100%;height:100%;display:block}
-.stats{font-size:15px;color:#617186}
-.number{font-size:27px;font-weight:bold;color:#1670b8;margin:3px 0 12px}
-.face{padding:9px;margin:7px 0;border-radius:8px;background:#f0f4f8}
+.num{font-size:30px;font-weight:bold;color:#1769aa;margin:5px 0 14px}
+.face{padding:10px;margin:8px 0;border-radius:8px;background:#f0f4f8}
 .green{border-left:5px solid #19ad5a}
 .red{border-left:5px solid #e33d3d}
-button{border:0;border-radius:8px;padding:10px 14px;background:#536579;color:white;cursor:pointer}
-#logs{max-height:270px;overflow:auto;font-size:13px;line-height:1.8}
-small{color:#617186}
+#logs{max-height:260px;overflow:auto;font-size:13px;line-height:1.8}
+button{padding:10px 14px;border:0;border-radius:8px;background:#536579;color:white}
 @media(max-width:750px){.layout{grid-template-columns:1fr}}
 </style>
 </head>
@@ -31,22 +29,18 @@ small{color:#617186}
 <main>
 <div class="card">
 <h2>一、MQTT 連線狀態</h2>
-<div class="status" id="mqttStatus">正在連接 HiveMQ...</div>
-<div><small>Broker：broker.hivemq.com</small></div>
-<div><small>WebSocket：wss://broker.hivemq.com:8884/mqtt</small></div>
-<div><small>訂閱 Topic：classroom/face-demo-2026/demo01</small></div>
-<div class="status" id="phoneStatus">🔴 尚未收到手機狀態</div>
-<div><small id="lastUpdate">最後更新：尚無</small></div>
+<div class="status" id="mqttStatus">正在連線...</div>
+<div class="status" id="phoneStatus">尚未收到手機狀態</div>
+<div id="lastUpdate">最後更新：尚無</div>
+<small>Topic：classroom/face-demo-2026/demo01</small>
 </div>
 
 <div class="layout">
 <div>
 <div class="card">
-<h2>二、手機辨識畫面（外框座標示意）</h2>
-<div class="stage">
-<canvas id="screen"></canvas>
-</div>
-<p><small>綠框：已辨識人員；紅框：未知人員。此畫面只呈現外框，不接收手機照片。</small></p>
+<h2>二、手機人臉外框</h2>
+<div class="stage"><canvas id="screen"></canvas></div>
+<p><small>綠框代表已辨識，紅框代表未知人員。PC 不會收到手機照片。</small></p>
 </div>
 <div class="card">
 <h2>三、目前辨識結果</h2>
@@ -57,19 +51,15 @@ small{color:#617186}
 <div>
 <div class="card">
 <h2>四、即時統計</h2>
-<div class="stats">目前人臉數量</div>
-<div class="number" id="total">0</div>
-<div class="stats">已辨識人員</div>
-<div class="number" id="known">0</div>
-<div class="stats">未知人員</div>
-<div class="number" id="unknown">0</div>
-<hr style="border:0;border-top:1px solid #ddd;margin:18px 0">
-<div class="stats">資料來源</div>
-<div id="source">尚無資料</div>
+目前人臉數量<div class="num" id="total">0</div>
+已辨識人員<div class="num" id="known">0</div>
+未知人員<div class="num" id="unknown">0</div>
+<hr>
+資料來源：<div id="source">尚無資料</div>
 </div>
 
 <div class="card">
-<h2>五、辨識紀錄</h2>
+<h2>五、接收紀錄</h2>
 <button onclick="clearLogs()">清除紀錄</button>
 <div id="logs"></div>
 </div>
@@ -83,69 +73,64 @@ const canvas=document.getElementById('screen');
 const ctx=canvas.getContext('2d');
 let lastFaces=[];
 
-function log(text){
-  const box=document.getElementById('logs');
-  const row=document.createElement('div');
-  row.textContent=new Date().toLocaleTimeString()+'　'+text;
-  box.prepend(row);
-  while(box.children.length>150)box.lastChild.remove();
+function setText(id,value){
+  document.getElementById(id).textContent=value;
 }
-function clearLogs(){document.getElementById('logs').innerHTML=''}
-function setText(id,value){document.getElementById(id).textContent=value}
-
-function clearScreen(message='目前沒有偵測到人臉'){
-  const w=canvas.width,h=canvas.height;
-  ctx.clearRect(0,0,w,h);
-  ctx.fillStyle='#101c2d';ctx.fillRect(0,0,w,h);
-  ctx.fillStyle='#bdc7d5';ctx.font='bold 24px Arial';
-  ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.fillText(message,w/2,h/2);
-  ctx.textAlign='left';
+function log(msg){
+  const div=document.createElement('div');
+  div.textContent=new Date().toLocaleTimeString()+'　'+msg;
+  document.getElementById('logs').prepend(div);
+}
+function clearLogs(){
+  document.getElementById('logs').innerHTML='';
 }
 function resizeCanvas(){
-  const rect=canvas.getBoundingClientRect();
-  const w=Math.max(640,Math.round(rect.width*2));
-  const h=Math.round(w*9/16);
-  canvas.width=w;canvas.height=h;
+  const r=canvas.getBoundingClientRect();
+  canvas.width=Math.max(640,Math.round(r.width*2));
+  canvas.height=Math.round(canvas.width*9/16);
   drawFaces(lastFaces);
 }
 function drawFaces(faces){
   lastFaces=Array.isArray(faces)?faces:[];
   const w=canvas.width,h=canvas.height;
-  ctx.clearRect(0,0,w,h);
-  ctx.fillStyle='#101c2d';ctx.fillRect(0,0,w,h);
 
-  if(!lastFaces.length){
-    ctx.fillStyle='#bdc7d5';ctx.font='bold 24px Arial';
-    ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#101c2d';
+  ctx.fillRect(0,0,w,h);
+
+  if(!faces.length){
+    ctx.fillStyle='#bdc7d5';
+    ctx.font='bold 24px Arial';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
     ctx.fillText('目前沒有偵測到人臉',w/2,h/2);
     ctx.textAlign='left';
     return;
   }
 
-  lastFaces.forEach(face=>{
-    if(!face.bbox)return;
-    const b=face.bbox;
-    // 手機端傳送的是 0~1 的正規化座標
-    const x=Math.max(0,Math.min(1,Number(b.x)||0))*w;
-    const y=Math.max(0,Math.min(1,Number(b.y)||0))*h;
-    const bw=Math.max(0,Math.min(1,Number(b.width)||0))*w;
-    const bh=Math.max(0,Math.min(1,Number(b.height)||0))*h;
-    const color=face.recognized?'#20df70':'#ff4545';
+  faces.forEach(f=>{
+    if(!f.bbox)return;
+    const b=f.bbox;
+    const x=(Number(b.x)||0)*w;
+    const y=(Number(b.y)||0)*h;
+    const bw=(Number(b.width)||0)*w;
+    const bh=(Number(b.height)||0)*h;
+    const color=f.recognized?'#20df70':'#ff4545';
 
     ctx.strokeStyle=color;
     ctx.lineWidth=5;
     ctx.strokeRect(x,y,bw,bh);
 
-    const label=String(face.name||'未知人員');
+    const name=String(f.name||'未知人員');
     ctx.font='bold 22px Arial';
-    const textWidth=ctx.measureText(label).width;
-    const labelY=Math.max(0,y-36);
-    ctx.fillStyle=face.recognized?'#168b48':'#c52c2c';
-    ctx.fillRect(x,labelY,textWidth+18,34);
-    ctx.fillStyle='#fff';
+    const tw=ctx.measureText(name).width;
+    const ly=Math.max(0,y-36);
+
+    ctx.fillStyle=f.recognized?'#168b48':'#c52c2c';
+    ctx.fillRect(x,ly,tw+18,34);
+    ctx.fillStyle='white';
     ctx.textBaseline='middle';
-    ctx.fillText(label,x+9,labelY+17);
+    ctx.fillText(name,x+9,ly+17);
   });
 }
 function updateResults(data){
@@ -157,71 +142,84 @@ function updateResults(data){
   setText('known',known);
   setText('unknown',unknown);
   setText('source',data.source==='photo'?'手機上傳照片':'手機即時攝影機');
+  setText('lastUpdate','最後更新：'+new Date(data.timestamp||Date.now()).toLocaleString());
 
   const list=document.getElementById('faceList');
   list.innerHTML='';
+
   if(!faces.length){
     list.textContent='目前沒有偵測到人臉';
   }else{
     faces.forEach((f,i)=>{
       const item=document.createElement('div');
       item.className='face '+(f.recognized?'green':'red');
+
       const name=document.createElement('strong');
       name.textContent=(i+1)+'. '+(f.name||'未知人員');
+
       const detail=document.createElement('div');
       detail.textContent=(f.recognized?'已辨識':'未知人員')+
-        '｜距離：'+(Number.isFinite(Number(f.distance))?Number(f.distance).toFixed(4):'--');
+        '｜距離：'+Number(f.distance||0).toFixed(4);
+
       item.append(name,detail);
       list.append(item);
     });
   }
+
   drawFaces(faces);
-  setText('lastUpdate','最後更新：'+new Date(data.timestamp||Date.now()).toLocaleString());
-  log('收到辨識資料：'+faces.length+' 張人臉，已辨識 '+known+'，未知 '+unknown);
+  log('收到 '+faces.length+' 張人臉；已辨識 '+known+'；未知 '+unknown);
 }
 
-const client=mqtt.connect('wss://broker.hivemq.com:8884/mqtt',{
-  clientId:'facePC_'+Math.random().toString(16).slice(2),
-  clean:true,connectTimeout:15000,reconnectPeriod:3000
-});
+if(typeof mqtt==='undefined'){
+  setText('mqttStatus','❌ MQTT 程式庫載入失敗');
+}else{
+  const client=mqtt.connect('wss://broker.hivemq.com:8884/mqtt',{
+    clientId:'facePC_'+Math.random().toString(16).slice(2),
+    clean:true,
+    connectTimeout:15000,
+    reconnectPeriod:3000
+  });
 
-client.on('connect',()=>{
-  setText('mqttStatus','✅ 已連線 HiveMQ，正在訂閱手機資料');
-  client.subscribe(TOPIC,{qos:0},err=>{
-    if(err){
-      setText('mqttStatus','❌ 訂閱失敗：'+err.message);
-    }else{
-      setText('mqttStatus','✅ 已連線 HiveMQ，已訂閱手機資料');
-      log('已成功訂閱 Topic：'+TOPIC);
+  client.on('connect',()=>{
+    setText('mqttStatus','✅ MQTT 已連線，正在訂閱');
+    client.subscribe(TOPIC,err=>{
+      if(err)setText('mqttStatus','訂閱失敗：'+err.message);
+      else{
+        setText('mqttStatus','✅ 已連線並成功訂閱手機資料');
+        log('訂閱成功：'+TOPIC);
+      }
+    });
+  });
+
+  client.on('reconnect',()=>setText('mqttStatus','正在重新連線...'));
+  client.on('offline',()=>setText('mqttStatus','MQTT 離線'));
+  client.on('error',e=>setText('mqttStatus','MQTT 錯誤：'+e.message));
+
+  client.on('message',(topic,payload)=>{
+    if(topic!==TOPIC)return;
+
+    let data;
+    try{
+      data=JSON.parse(payload.toString());
+    }catch(e){
+      log('收到無法解析的資料');
+      return;
+    }
+
+    if(data.type==='phone_status'){
+      setText('phoneStatus',data.online?'🟢 手機已連線':'🔴 手機已停止或離線');
+      log(data.online?'手機已連線':'手機已離線');
+    }
+
+    if(data.type==='face_results'){
+      updateResults(data);
     }
   });
-});
-client.on('reconnect',()=>setText('mqttStatus','正在重新連線 HiveMQ...'));
-client.on('offline',()=>setText('mqttStatus','🔴 MQTT 離線'));
-client.on('error',e=>setText('mqttStatus','MQTT 錯誤：'+e.message));
-
-client.on('message',(topic,payload)=>{
-  if(topic!==TOPIC)return;
-  let data;
-  try{data=JSON.parse(payload.toString())}
-  catch(e){log('收到無法解析的資料');return}
-
-  if(data.type==='phone_status'){
-    setText('phoneStatus',data.online?'🟢 手機已連線':'🔴 手機已停止或離線');
-    log(data.online?'手機已連線':'手機已離線');
-    return;
-  }
-
-  if(data.type==='face_results'){
-    updateResults(data);
-    return;
-  }
-  log('收到其他資料：'+(data.type||'未知類型'));
-});
+}
 
 window.addEventListener('resize',resizeCanvas);
 resizeCanvas();
-clearScreen();
+drawFaces([]);
 </script>
 </body>
 </html>
