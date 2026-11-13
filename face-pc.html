@@ -4,536 +4,224 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>電腦 AI 人臉辨識監控</title>
-
+<title>PC 即時人臉辨識監控</title>
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-
 <style>
-*{
- box-sizing:border-box;
-}
-
-body{
- margin:0;
- background:#eef2f7;
- color:#172334;
- font-family:Arial,"Noto Sans TC",sans-serif;
-}
-
-header{
- background:#173b68;
- color:#fff;
- padding:22px;
- text-align:center;
-}
-
-h1{
- font-size:24px;
- margin:0 0 7px;
-}
-
-main{
- max-width:1050px;
- margin:18px auto;
- padding:0 14px;
-}
-
-.grid{
- display:grid;
- grid-template-columns:2fr 1fr;
- gap:14px;
-}
-
-.card{
- background:white;
- border-radius:13px;
- padding:17px;
- box-shadow:0 2px 12px #0000000c;
- margin-bottom:14px;
-}
-
-h2{
- font-size:18px;
- margin:0 0 13px;
-}
-
-.status{
- padding:11px;
- border-radius:8px;
- background:#edf4fb;
- line-height:1.6;
- white-space:pre-wrap;
-}
-
-#screen{
- width:100%;
- height:auto;
- display:block;
- background:#101b2b;
- border-radius:10px;
-}
-
-.metric{
- font-size:28px;
- font-weight:bold;
- color:#1769aa;
-}
-
-.muted{
- font-size:13px;
- color:#607080;
- line-height:1.5;
-}
-
-.face{
- padding:10px;
- border:1px solid #dbe3ed;
- border-radius:9px;
- margin:8px 0;
- display:flex;
- justify-content:space-between;
- gap:8px;
-}
-
-.good{
- color:#07964e;
- font-weight:bold;
-}
-
-.bad{
- color:#d12d2d;
- font-weight:bold;
-}
-
-button{
- border:0;
- border-radius:8px;
- padding:10px 13px;
- background:#526579;
- color:white;
- cursor:pointer;
-}
-
-.log{
- max-height:240px;
- overflow:auto;
- font-size:13px;
- line-height:1.7;
-}
-
-@media(max-width:700px){
- .grid{
-  grid-template-columns:1fr;
- }
-}
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;margin:0;padding:18px;background:#edf2f8;color:#172033}
+main{max-width:1100px;margin:auto}
+.card{background:white;padding:17px;border-radius:14px;margin-bottom:14px;box-shadow:0 3px 12px #0001}
+h2{font-size:19px;margin:0 0 12px}
+.status{padding:12px;border-radius:9px;background:#edf4fc;margin:8px 0}
+.layout{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+.stage{width:100%;aspect-ratio:16/9;background:#101c2d;position:relative;border-radius:10px;overflow:hidden}
+canvas{width:100%;height:100%;display:block}
+.stats{font-size:15px;color:#617186}
+.number{font-size:27px;font-weight:bold;color:#1670b8;margin:3px 0 12px}
+.face{padding:9px;margin:7px 0;border-radius:8px;background:#f0f4f8}
+.green{border-left:5px solid #19ad5a}
+.red{border-left:5px solid #e33d3d}
+button{border:0;border-radius:8px;padding:10px 14px;background:#536579;color:white;cursor:pointer}
+#logs{max-height:270px;overflow:auto;font-size:13px;line-height:1.8}
+small{color:#617186}
+@media(max-width:750px){.layout{grid-template-columns:1fr}}
 </style>
 </head>
-
 <body>
-
-<header>
-<h1>🖥️ AI 人臉辨識電腦監控系統</h1>
-<div>MQTT 即時接收手機辨識結果（不傳送照片）</div>
-</header>
-
 <main>
-
-<section class="card">
-
+<div class="card">
 <h2>一、MQTT 連線狀態</h2>
-
-<div id="mqttStatus" class="status">
-正在連接 HiveMQ…
+<div class="status" id="mqttStatus">正在連接 HiveMQ...</div>
+<div><small>Broker：broker.hivemq.com</small></div>
+<div><small>WebSocket：wss://broker.hivemq.com:8884/mqtt</small></div>
+<div><small>訂閱 Topic：classroom/face-demo-2026/demo01</small></div>
+<div class="status" id="phoneStatus">🔴 尚未收到手機狀態</div>
+<div><small id="lastUpdate">最後更新：尚無</small></div>
 </div>
 
-<p class="muted">
-Broker：broker.hivemq.com
-<br>
-WebSocket：wss://broker.hivemq.com:8884/mqtt
-</p>
-
-<p class="muted">
-訂閱 Topic：
-<b id="topicText"></b>
-</p>
-
-</section>
-
-<div class="grid">
-
+<div class="layout">
 <div>
-
-<section class="card">
-
+<div class="card">
 <h2>二、手機辨識畫面（外框座標示意）</h2>
-
-<canvas id="screen" width="800" height="450"></canvas>
-
-<p class="muted">
-此區依照手機傳來的正規化座標繪製外框，
-不含照片或即時影像。
-綠框代表已登錄人員，紅框代表未知人員。
-</p>
-
-</section>
-
-<section class="card">
-
-<h2>三、目前辨識結果</h2>
-
-<div id="faces">
-<div class="muted">等待手機傳送資料…</div>
+<div class="stage">
+<canvas id="screen"></canvas>
 </div>
-
-</section>
-
+<p><small>綠框：已辨識人員；紅框：未知人員。此畫面只呈現外框，不接收手機照片。</small></p>
+</div>
+<div class="card">
+<h2>三、目前辨識結果</h2>
+<div id="faceList">目前沒有偵測到人臉</div>
+</div>
 </div>
 
 <div>
-
-<section class="card">
-
+<div class="card">
 <h2>四、即時統計</h2>
-
-<div class="muted">目前人臉數量</div>
-<div class="metric" id="count">0</div>
-
-<div class="muted">已辨識人員</div>
-<div class="metric" id="known">0</div>
-
-<div class="muted">未知人員</div>
-<div class="metric" id="unknown">0</div>
-
-<hr style="border:0;border-top:1px solid #e2e8f0;margin:15px 0">
-
-<div class="muted">手機狀態</div>
-
-<div id="phoneStatus" class="status">
-尚未收到手機狀態
+<div class="stats">目前人臉數量</div>
+<div class="number" id="total">0</div>
+<div class="stats">已辨識人員</div>
+<div class="number" id="known">0</div>
+<div class="stats">未知人員</div>
+<div class="number" id="unknown">0</div>
+<hr style="border:0;border-top:1px solid #ddd;margin:18px 0">
+<div class="stats">資料來源</div>
+<div id="source">尚無資料</div>
 </div>
 
-<div class="muted" style="margin-top:10px">
-最後更新時間
-</div>
-
-<div id="lastTime">--</div>
-
-</section>
-
-<section class="card">
-
+<div class="card">
 <h2>五、辨識紀錄</h2>
-
-<button id="clearLog">清除紀錄</button>
-
-<div id="log" class="log"></div>
-
-</section>
-
+<button onclick="clearLogs()">清除紀錄</button>
+<div id="logs"></div>
 </div>
-
 </div>
-
+</div>
 </main>
 
 <script>
-(() => {
-
 const TOPIC='classroom/face-demo-2026/demo01';
-
-const $=id=>document.getElementById(id);
-
-$('topicText').textContent=TOPIC;
-
-const canvas=$('screen');
+const canvas=document.getElementById('screen');
 const ctx=canvas.getContext('2d');
+let lastFaces=[];
 
-let lastSignature='';
-
-// 繪製人臉外框
-function draw(faces){
-
- const w=canvas.width;
- const h=canvas.height;
-
- ctx.fillStyle='#101b2b';
- ctx.fillRect(0,0,w,h);
-
- ctx.fillStyle='#a9b8ca';
- ctx.font='18px Arial';
-
- ctx.fillText(
-  '手機人臉位置示意圖（無照片）',
-  22,32
- );
-
- if(!faces.length){
-
-  ctx.fillStyle='#cbd5e1';
-  ctx.font='24px Arial';
-
-  ctx.fillText(
-   '目前沒有偵測到人臉',
-   w/2-130,
-   h/2
-  );
-
-  return;
-
- }
-
- faces.forEach((f,i)=>{
-
-  const b=f.bbox||{};
-
-  const x=(b.x||0)*w;
-  const y=(b.y||0)*h;
-  const bw=(b.width||0)*w;
-  const bh=(b.height||0)*h;
-
-  const color=f.recognized
-   ?'#00e676'
-   :'#ff4545';
-
-  ctx.strokeStyle=color;
-  ctx.lineWidth=4;
-
-  ctx.strokeRect(
-   x,y,bw,bh
-  );
-
-  const label=(f.name||'未知人員')+
-   (f.recognized?' ✓':'');
-
-  ctx.font='bold 18px Arial';
-
-  const tw=ctx.measureText(label).width;
-
-  ctx.fillStyle=color;
-
-  ctx.fillRect(
-   x,
-   Math.max(42,y-30),
-   tw+16,
-   28
-  );
-
-  ctx.fillStyle='#07111d';
-
-  ctx.fillText(
-   label,
-   x+8,
-   Math.max(63,y-10)
-  );
-
- });
-
-}
-
-// 新增辨識紀錄
-function addLog(message){
-
- const line=document.createElement('div');
-
- line.textContent=
-  new Date().toLocaleTimeString()+
-  '　'+message;
-
- $('log').prepend(line);
-
- while($('log').children.length>50){
-
-  $('log').lastChild.remove();
-
- }
-
-}
-
-// 顯示辨識結果
-function showFaces(data){
-
- const faces=Array.isArray(data.faces)
-  ?data.faces
-  :[];
-
- $('count').textContent=faces.length;
-
- const known=faces.filter(
-  f=>f.recognized
- ).length;
-
- const unknown=faces.length-known;
-
- $('known').textContent=known;
- $('unknown').textContent=unknown;
-
- $('faces').innerHTML='';
-
- if(!faces.length){
-
-  $('faces').innerHTML=
-   '<div class="muted">目前沒有偵測到人臉</div>';
-
- }
-
- faces.forEach(f=>{
-
+function log(text){
+  const box=document.getElementById('logs');
   const row=document.createElement('div');
+  row.textContent=new Date().toLocaleTimeString()+'　'+text;
+  box.prepend(row);
+  while(box.children.length>150)box.lastChild.remove();
+}
+function clearLogs(){document.getElementById('logs').innerHTML=''}
+function setText(id,value){document.getElementById(id).textContent=value}
 
-  row.className='face';
+function clearScreen(message='目前沒有偵測到人臉'){
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#101c2d';ctx.fillRect(0,0,w,h);
+  ctx.fillStyle='#bdc7d5';ctx.font='bold 24px Arial';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(message,w/2,h/2);
+  ctx.textAlign='left';
+}
+function resizeCanvas(){
+  const rect=canvas.getBoundingClientRect();
+  const w=Math.max(640,Math.round(rect.width*2));
+  const h=Math.round(w*9/16);
+  canvas.width=w;canvas.height=h;
+  drawFaces(lastFaces);
+}
+function drawFaces(faces){
+  lastFaces=Array.isArray(faces)?faces:[];
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#101c2d';ctx.fillRect(0,0,w,h);
 
-  const name=document.createElement('b');
+  if(!lastFaces.length){
+    ctx.fillStyle='#bdc7d5';ctx.font='bold 24px Arial';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText('目前沒有偵測到人臉',w/2,h/2);
+    ctx.textAlign='left';
+    return;
+  }
 
-  name.textContent=f.name||'未知人員';
+  lastFaces.forEach(face=>{
+    if(!face.bbox)return;
+    const b=face.bbox;
+    // 手機端傳送的是 0~1 的正規化座標
+    const x=Math.max(0,Math.min(1,Number(b.x)||0))*w;
+    const y=Math.max(0,Math.min(1,Number(b.y)||0))*h;
+    const bw=Math.max(0,Math.min(1,Number(b.width)||0))*w;
+    const bh=Math.max(0,Math.min(1,Number(b.height)||0))*h;
+    const color=face.recognized?'#20df70':'#ff4545';
 
-  const state=document.createElement('span');
+    ctx.strokeStyle=color;
+    ctx.lineWidth=5;
+    ctx.strokeRect(x,y,bw,bh);
 
-  state.className=f.recognized
-   ?'good'
-   :'bad';
+    const label=String(face.name||'未知人員');
+    ctx.font='bold 22px Arial';
+    const textWidth=ctx.measureText(label).width;
+    const labelY=Math.max(0,y-36);
+    ctx.fillStyle=face.recognized?'#168b48':'#c52c2c';
+    ctx.fillRect(x,labelY,textWidth+18,34);
+    ctx.fillStyle='#fff';
+    ctx.textBaseline='middle';
+    ctx.fillText(label,x+9,labelY+17);
+  });
+}
+function updateResults(data){
+  const faces=Array.isArray(data.faces)?data.faces:[];
+  const known=faces.filter(f=>f.recognized).length;
+  const unknown=faces.length-known;
 
-  state.textContent=f.recognized
-   ?'已辨識'
-   :'未知人員';
+  setText('total',faces.length);
+  setText('known',known);
+  setText('unknown',unknown);
+  setText('source',data.source==='photo'?'手機上傳照片':'手機即時攝影機');
 
-  row.append(name,state);
-
-  $('faces').append(row);
-
- });
-
- draw(faces);
-
- const signature=faces.map(
-  f=>(f.name||'?')+':'+!!f.recognized
- ).join('|');
-
- if(signature!==lastSignature){
-
-  addLog(
-   faces.length
-    ?faces.map(
-      f=>f.name+
-      (f.recognized?'（已辨識）':'（未知）')
-     ).join('、')
-    :'沒有偵測到人臉'
-  );
-
-  lastSignature=signature;
-
- }
-
- $('lastTime').textContent=
-  new Date().toLocaleString();
-
+  const list=document.getElementById('faceList');
+  list.innerHTML='';
+  if(!faces.length){
+    list.textContent='目前沒有偵測到人臉';
+  }else{
+    faces.forEach((f,i)=>{
+      const item=document.createElement('div');
+      item.className='face '+(f.recognized?'green':'red');
+      const name=document.createElement('strong');
+      name.textContent=(i+1)+'. '+(f.name||'未知人員');
+      const detail=document.createElement('div');
+      detail.textContent=(f.recognized?'已辨識':'未知人員')+
+        '｜距離：'+(Number.isFinite(Number(f.distance))?Number(f.distance).toFixed(4):'--');
+      item.append(name,detail);
+      list.append(item);
+    });
+  }
+  drawFaces(faces);
+  setText('lastUpdate','最後更新：'+new Date(data.timestamp||Date.now()).toLocaleString());
+  log('收到辨識資料：'+faces.length+' 張人臉，已辨識 '+known+'，未知 '+unknown);
 }
 
-// 檢查 MQTT
-if(typeof mqtt==='undefined'){
+const client=mqtt.connect('wss://broker.hivemq.com:8884/mqtt',{
+  clientId:'facePC_'+Math.random().toString(16).slice(2),
+  clean:true,connectTimeout:15000,reconnectPeriod:3000
+});
 
- $('mqttStatus').textContent=
-  'MQTT.js 載入失敗，請檢查網路';
-
- return;
-
-}
-
-// 連接 HiveMQ
-const client=mqtt.connect(
- 'wss://broker.hivemq.com:8884/mqtt',
- {
-  clientId:'facePC_'+
-   Math.random().toString(16).slice(2,10),
-
-  clean:true,
-
-  connectTimeout:10000,
-
-  reconnectPeriod:3000
- }
-);
-
-// 連線成功
 client.on('connect',()=>{
-
- client.subscribe(
-  TOPIC,
-  {qos:0},
-  err=>{
-
-   $('mqttStatus').textContent=err
-    ?'訂閱失敗：'+err.message
-    :'✅ 已連線 HiveMQ，正在等待手機資料';
-
-  }
- );
-
+  setText('mqttStatus','✅ 已連線 HiveMQ，正在訂閱手機資料');
+  client.subscribe(TOPIC,{qos:0},err=>{
+    if(err){
+      setText('mqttStatus','❌ 訂閱失敗：'+err.message);
+    }else{
+      setText('mqttStatus','✅ 已連線 HiveMQ，已訂閱手機資料');
+      log('已成功訂閱 Topic：'+TOPIC);
+    }
+  });
 });
+client.on('reconnect',()=>setText('mqttStatus','正在重新連線 HiveMQ...'));
+client.on('offline',()=>setText('mqttStatus','🔴 MQTT 離線'));
+client.on('error',e=>setText('mqttStatus','MQTT 錯誤：'+e.message));
 
-// 重新連線
-client.on('reconnect',()=>{
-
- $('mqttStatus').textContent='重新連線中…';
-
-});
-
-// 錯誤
-client.on('error',e=>{
-
- $('mqttStatus').textContent=
-  'MQTT 錯誤：'+e.message;
-
-});
-
-// 接收手機資料
 client.on('message',(topic,payload)=>{
+  if(topic!==TOPIC)return;
+  let data;
+  try{data=JSON.parse(payload.toString())}
+  catch(e){log('收到無法解析的資料');return}
 
- if(topic!==TOPIC)return;
-
- try{
-
-  const data=JSON.parse(payload.toString());
-
-  // 手機連線狀態
   if(data.type==='phone_status'){
-
-   $('phoneStatus').textContent=
-    data.online
-     ?'🟢 手機已連線／鏡頭可用'
-     :'🟠 手機已停止或離線';
-
-   $('lastTime').textContent=
-    new Date().toLocaleString();
-
+    setText('phoneStatus',data.online?'🟢 手機已連線':'🔴 手機已停止或離線');
+    log(data.online?'手機已連線':'手機已離線');
+    return;
   }
 
-  // 人臉辨識結果
-  else if(data.type==='face_results'){
-
-   showFaces(data);
-
+  if(data.type==='face_results'){
+    updateResults(data);
+    return;
   }
-
- }catch(e){
-
-  console.error('資料格式錯誤',e);
-
- }
-
+  log('收到其他資料：'+(data.type||'未知類型'));
 });
 
-// 清除紀錄
-$('clearLog').onclick=()=>{
-
- $('log').innerHTML='';
-
-};
-
-// 初始畫面
-draw([]);
-
-})();
+window.addEventListener('resize',resizeCanvas);
+resizeCanvas();
+clearScreen();
 </script>
-
 </body>
 </html>
