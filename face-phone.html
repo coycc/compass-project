@@ -1,0 +1,646 @@
+
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>手機 AI 人臉辨識 MQTT 版</title>
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f2f5f9;color:#172334;font-family:Arial,"Noto Sans TC",sans-serif}
+header{background:#173b68;color:white;padding:20px;text-align:center}
+main{max-width:760px;margin:16px auto;padding:0 12px}
+.card{background:white;padding:16px;border-radius:13px;margin:13px 0;box-shadow:0 2px 12px #0000000c}
+h1{font-size:21px;margin:0 0 7px}
+h2{font-size:18px;margin:0 0 12px}
+input[type=text],input[type=file]{width:100%;padding:11px;border:1px solid #ccd5e0;border-radius:8px;margin:5px 0 10px}
+button{background:#1769aa;color:white;border:0;border-radius:8px;padding:11px 14px;margin:5px 4px 5px 0;font-size:15px}
+button:disabled{opacity:.45}
+.danger{background:#b83232}
+.status{background:#edf4fb;padding:10px;border-radius:8px;margin-top:10px;white-space:pre-wrap;line-height:1.5}
+.camera{position:relative;background:#111;border-radius:10px;overflow:hidden}
+video{width:100%;display:block}
+canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.person{display:flex;justify-content:space-between;align-items:center;border:1px solid #dbe3ed;padding:9px;border-radius:8px;margin:7px 0}
+.small{font-size:13px;color:#596b7d;line-height:1.5}
+</style>
+</head>
+<body>
+
+<header>
+<h1>📷 手機 AI 人臉辨識系統</h1>
+<div>辨識結果透過 MQTT 傳送到電腦</div>
+</header>
+
+<main>
+
+<section class="card">
+<h2>一、MQTT 連線</h2>
+<div class="small">
+Broker：broker.hivemq.com<br>
+WebSocket：wss://broker.hivemq.com:8884/mqtt
+</div>
+<div id="mqttStatus" class="status">尚未連線</div>
+</section>
+
+<section class="card">
+<h2>二、載入 AI 模型</h2>
+<button id="loadBtn">載入 AI 模型</button>
+<div id="modelStatus" class="status">尚未載入</div>
+</section>
+
+<section class="card">
+<h2>三、登錄人員</h2>
+<label>姓名</label>
+<input id="personName" type="text" maxlength="30" placeholder="例如：王小明">
+
+<label>選擇一張或多張清晰正面照片</label>
+<input id="personPhotos" type="file" accept="image/*" multiple>
+
+<div class="small">
+照片及人臉特徵只存在這台手機瀏覽器，不會傳到電腦。
+建議每人登錄 2～5 張照片。
+</div>
+
+<button id="registerBtn" disabled>登錄照片</button>
+<div id="registerStatus" class="status">請先載入模型</div>
+</section>
+
+<section class="card">
+<h2>四、即時辨識</h2>
+
+<div class="camera">
+<video id="video" autoplay muted playsinline></video>
+<canvas id="overlay"></canvas>
+</div>
+
+<button id="startBtn" disabled>開啟前置鏡頭</button>
+<button id="switchBtn" disabled>切換鏡頭</button>
+<button id="stopBtn" class="danger" disabled>停止</button>
+
+<div id="cameraStatus" class="status">尚未開啟鏡頭</div>
+</section>
+
+<section class="card">
+<h2>五、已登錄人員</h2>
+<div id="peopleList"></div>
+<div id="empty" class="small">目前沒有登錄人員</div>
+<button id="clearBtn" class="danger">清除全部人員</button>
+</section>
+
+<p class="small">
+請先取得當事人同意再登錄人臉。
+此系統僅供課堂展示，不適合重要身分驗證或門禁用途。
+</p>
+
+</main>
+
+<script>
+(() => {
+
+const TOPIC='classroom/face-demo-2026/demo01';
+const MODEL_URL='https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+const KEY='mobileFaceRecognition_mqtt_v1';
+
+const $=id=>document.getElementById(id);
+
+const video=$('video');
+const canvas=$('overlay');
+const ctx=canvas.getContext('2d');
+
+const deviceId='phone-'+Math.random().toString(36).slice(2,9);
+
+let client=null;
+let modelsReady=false;
+let stream=null;
+let facing='user';
+let running=false;
+let timer=null;
+let matcher=null;
+
+let people=[];
+
+try{
+ people=JSON.parse(localStorage.getItem(KEY)||'[]');
+ if(!Array.isArray(people))people=[];
+}catch(e){
+ people=[];
+}
+
+// MQTT 連線
+function mqttConnect(){
+
+ if(typeof mqtt==='undefined'){
+  $('mqttStatus').textContent='MQTT.js 載入失敗，請檢查網路';
+  return;
+ }
+
+ $('mqttStatus').textContent='正在連接 HiveMQ…';
+
+ client=mqtt.connect(
+  'wss://broker.hivemq.com:8884/mqtt',
+  {
+   clientId:'facePhone_'+Math.random().toString(16).slice(2,10),
+   clean:true,
+   connectTimeout:10000,
+   reconnectPeriod:3000
+  }
+ );
+
+ client.on('connect',()=>{
+  $('mqttStatus').textContent='✅ MQTT 已連線\nTopic：'+TOPIC;
+
+  publish({
+   type:'phone_status',
+   online:true,
+   deviceId
+  });
+ });
+
+ client.on('reconnect',()=>{
+  $('mqttStatus').textContent='正在重新連線…';
+ });
+
+ client.on('error',e=>{
+  $('mqttStatus').textContent='MQTT 錯誤：'+e.message;
+ });
+
+ client.on('close',()=>{
+  if(!client.connected){
+   $('mqttStatus').textContent='MQTT 已中斷，正在重連…';
+  }
+ });
+}
+
+// 發布 MQTT
+function publish(data){
+
+ if(client&&client.connected){
+  client.publish(
+   TOPIC,
+   JSON.stringify({
+    ...data,
+    deviceId,
+    time:new Date().toISOString()
+   }),
+   {qos:0,retain:false}
+  );
+ }
+
+}
+
+// 儲存人員資料
+function save(){
+
+ localStorage.setItem(KEY,JSON.stringify(people));
+
+ renderPeople();
+ buildMatcher();
+
+}
+
+// 顯示人員
+function renderPeople(){
+
+ $('peopleList').innerHTML='';
+
+ $('empty').style.display=people.length?'none':'block';
+
+ people.forEach(p=>{
+
+  const row=document.createElement('div');
+  row.className='person';
+
+  const label=document.createElement('b');
+  label.textContent=p.name+'（'+p.descriptors.length+' 組特徵）';
+
+  const del=document.createElement('button');
+  del.textContent='刪除';
+  del.className='danger';
+
+  del.onclick=()=>{
+
+   if(confirm('刪除 '+p.name+'？')){
+
+    people=people.filter(x=>x.id!==p.id);
+
+    save();
+
+   }
+
+  };
+
+  row.append(label,del);
+
+  $('peopleList').append(row);
+
+ });
+
+}
+
+// 建立辨識資料
+function buildMatcher(){
+
+ if(!modelsReady)return;
+
+ const arr=people.map(p=>
+  new faceapi.LabeledFaceDescriptors(
+   p.name,
+   p.descriptors.map(d=>new Float32Array(d))
+  )
+ );
+
+ matcher=arr.length
+  ?new faceapi.FaceMatcher(arr,0.50)
+  :null;
+
+}
+
+// 載入 AI 模型
+async function loadModels(){
+
+ $('loadBtn').disabled=true;
+ $('modelStatus').textContent='模型下載中，請稍候…';
+
+ try{
+
+  await Promise.all([
+
+   faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+
+   faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+
+   faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+
+  ]);
+
+  modelsReady=true;
+
+  $('modelStatus').textContent='✅ 模型載入完成';
+
+  $('registerBtn').disabled=false;
+  $('startBtn').disabled=false;
+
+  buildMatcher();
+
+ }catch(e){
+
+  console.error(e);
+
+  $('modelStatus').textContent='模型載入失敗，請檢查網路後重新整理';
+
+  $('loadBtn').disabled=false;
+
+ }
+
+}
+
+// 登錄照片
+async function register(){
+
+ const name=$('personName').value.trim();
+ const files=[...$('personPhotos').files];
+
+ if(!name)return alert('請輸入姓名');
+ if(!files.length)return alert('請選照片');
+
+ $('registerBtn').disabled=true;
+ $('registerStatus').textContent='正在分析照片…';
+
+ let ds=[];
+
+ try{
+
+  for(const f of files){
+
+   const img=await faceapi.bufferToImage(f);
+
+   const r=await faceapi
+    .detectSingleFace(
+     img,
+     new faceapi.TinyFaceDetectorOptions({
+      inputSize:320,
+      scoreThreshold:.45
+     })
+    )
+    .withFaceLandmarks()
+    .withFaceDescriptor();
+
+   if(r){
+    ds.push(Array.from(r.descriptor));
+   }
+
+  }
+
+  if(!ds.length){
+
+   $('registerStatus').textContent=
+    '照片中找不到清楚的人臉，請換照片';
+
+   return;
+
+  }
+
+  let p=people.find(
+   x=>x.name.toLowerCase()===name.toLowerCase()
+  );
+
+  if(!p){
+
+   p={
+    id:Date.now()+'',
+    name,
+    descriptors:[]
+   };
+
+   people.push(p);
+
+  }
+
+  p.descriptors.push(...ds);
+
+  save();
+
+  $('registerStatus').textContent=
+   '✅ '+name+' 登錄成功，分析 '+ds.length+' 張照片';
+
+  $('personName').value='';
+  $('personPhotos').value='';
+
+ }catch(e){
+
+  console.error(e);
+
+  $('registerStatus').textContent='照片分析失敗';
+
+ }finally{
+
+  $('registerBtn').disabled=false;
+
+ }
+
+}
+
+// 開啟鏡頭
+async function startCamera(){
+
+ if(!modelsReady)return alert('請先載入模型');
+
+ if(!people.length)return alert('請先登錄至少一位人員');
+
+ stopCamera();
+
+ $('cameraStatus').textContent='正在開啟鏡頭…';
+
+ try{
+
+  stream=await navigator.mediaDevices.getUserMedia({
+
+   audio:false,
+
+   video:{
+    facingMode:{ideal:facing},
+    width:{ideal:640},
+    height:{ideal:480}
+   }
+
+  });
+
+  video.srcObject=stream;
+
+  await video.play();
+
+  $('startBtn').disabled=true;
+  $('stopBtn').disabled=false;
+  $('switchBtn').disabled=false;
+
+  $('cameraStatus').textContent='鏡頭已開啟，辨識結果同步傳送中';
+
+  running=true;
+
+  detectLoop();
+
+ }catch(e){
+
+  console.error(e);
+
+  $('cameraStatus').textContent=
+   '無法開啟鏡頭：'+e.message+
+   '。請使用 HTTPS 並允許相機權限。';
+
+ }
+
+}
+
+// 停止鏡頭
+function stopCamera(){
+
+ running=false;
+
+ if(timer)clearTimeout(timer);
+
+ timer=null;
+
+ if(stream){
+  stream.getTracks().forEach(t=>t.stop());
+ }
+
+ stream=null;
+
+ video.srcObject=null;
+
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+
+ $('startBtn').disabled=!modelsReady;
+ $('stopBtn').disabled=true;
+ $('switchBtn').disabled=true;
+
+ publish({type:'phone_status',online:false});
+
+}
+
+// 即時辨識
+async function detectLoop(){
+
+ if(!running||video.readyState<2){
+
+  if(running)timer=setTimeout(detectLoop,300);
+
+  return;
+
+ }
+
+ try{
+
+  const results=await faceapi
+   .detectAllFaces(
+    video,
+    new faceapi.TinyFaceDetectorOptions({
+     inputSize:320,
+     scoreThreshold:.4
+    })
+   )
+   .withFaceLandmarks()
+   .withFaceDescriptors();
+
+  const w=video.videoWidth;
+  const h=video.videoHeight;
+
+  if(canvas.width!==w||canvas.height!==h){
+
+   canvas.width=w;
+   canvas.height=h;
+
+  }
+
+  ctx.clearRect(0,0,w,h);
+
+  const faces=results.map(r=>{
+
+   const b=r.detection.box;
+
+   let name='未知人員';
+   let recognized=false;
+   let distance=null;
+
+   if(matcher){
+
+    const best=matcher.findBestMatch(r.descriptor);
+
+    distance=Number(best.distance.toFixed(4));
+
+    if(best.label!=='unknown'){
+
+     name=best.label;
+     recognized=true;
+
+    }
+
+   }
+
+   const x=b.x/w;
+   const y=b.y/h;
+   const bw=b.width/w;
+   const bh=b.height/h;
+
+   ctx.strokeStyle=recognized?'#00e676':'#ff3838';
+   ctx.lineWidth=4;
+
+   ctx.strokeRect(
+    b.x,b.y,b.width,b.height
+   );
+
+   ctx.font='bold 18px Arial';
+
+   const tw=ctx.measureText(name).width;
+
+   ctx.fillStyle=recognized?'#00a854':'#d62929';
+
+   ctx.fillRect(
+    b.x,
+    Math.max(0,b.y-28),
+    tw+14,
+    27
+   );
+
+   ctx.fillStyle='#fff';
+
+   ctx.fillText(
+    name,
+    b.x+7,
+    Math.max(19,b.y-9)
+   );
+
+   return {
+
+    name,
+    recognized,
+    distance,
+
+    bbox:{
+     x,
+     y,
+     width:bw,
+     height:bh
+    }
+
+   };
+
+  });
+
+  // 傳送辨識結果，不傳照片
+  publish({
+
+   type:'face_results',
+
+   faces,
+
+   faceCount:faces.length,
+
+   frame:{
+    width:w,
+    height:h
+   }
+
+  });
+
+  $('cameraStatus').textContent=faces.length
+   ?'偵測到 '+faces.length+' 張人臉，已同步到電腦'
+   :'目前沒有偵測到人臉，已同步空畫面';
+
+ }catch(e){
+
+  console.error(e);
+
+ }
+
+ if(running){
+  timer=setTimeout(detectLoop,300);
+ }
+
+}
+
+// 按鈕事件
+$('loadBtn').onclick=loadModels;
+$('registerBtn').onclick=register;
+$('startBtn').onclick=startCamera;
+$('stopBtn').onclick=stopCamera;
+
+$('switchBtn').onclick=()=>{
+
+ facing=facing==='user'?'environment':'user';
+
+ startCamera();
+
+};
+
+$('clearBtn').onclick=()=>{
+
+ if(confirm('確定清除所有人臉特徵？')){
+
+  people=[];
+
+  save();
+
+ }
+
+};
+
+window.addEventListener('beforeunload',()=>{
+
+ if(stream){
+  stream.getTracks().forEach(t=>t.stop());
+ }
+
+});
+
+renderPeople();
+
+mqttConnect();
+
+})();
+</script>
+</body>
+</html>
