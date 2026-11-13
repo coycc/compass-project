@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI 人臉辨識系統</title>
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
 <style>
 *{box-sizing:border-box}
 body{
@@ -31,9 +32,9 @@ input{padding:10px;margin:6px;max-width:95%}
 }
 .stage{
  position:relative;background:#111;
- border-radius:10px;overflow:hidden
+ border-radius:10px;overflow:hidden;width:100%
 }
-video{width:100%;display:block}
+video{width:100%;height:auto;display:block}
 canvas{
  position:absolute;left:0;top:0;
  width:100%;height:100%;pointer-events:none
@@ -42,28 +43,31 @@ canvas{
  padding:9px;border-bottom:1px solid #ddd;
  display:flex;justify-content:space-between;gap:8px
 }
-small{color:#667}
+.green{color:#138b45}
+.redText{color:#c22}
 </style>
 </head>
+
 <body>
 <main>
 
 <div class="card">
 <h2>AI 人臉辨識系統</h2>
-<div class="status" id="libStatus">等待載入 AI 程式庫...</div>
+<div class="status" id="libStatus">等待載入程式庫...</div>
 <div class="status" id="modelStatus">等待載入 AI 模型...</div>
 <div class="status" id="mqttStatus">MQTT 連線中...</div>
-<div class="status" id="cameraStatus">等待啟動後置鏡頭...</div>
+<div class="status" id="cameraStatus">等待攝影機...</div>
+<div class="status" id="detectStatus">等待人臉偵測...</div>
 </div>
 
 <div class="card">
 <h2>一、人員照片登錄</h2>
-<input id="personName" placeholder="輸入姓名">
+<input id="personName" placeholder="輸入人員姓名">
 <br>
 <input id="registerFiles" type="file" accept="image/*" multiple>
 <br>
 <button onclick="registerPerson()">登錄人員照片</button>
-<div id="peopleList">尚未登錄人員</div>
+<div id="peopleList"></div>
 </div>
 
 <div class="card">
@@ -86,7 +90,12 @@ small{color:#667}
 
 <div class="card">
 <h2>四、辨識設定</h2>
-<label>辨識門檻：</label>
+<label>偵測靈敏度：</label>
+<input id="sensitivity" type="range"
+ min="0.05" max="0.50" step="0.05" value="0.15">
+<span id="sensitivityValue">0.15</span>
+<br>
+<label>姓名比對門檻：</label>
 <input id="threshold" type="range"
  min="0.35" max="0.75" step="0.01" value="0.50">
 <span id="thresholdValue">0.50</span>
@@ -102,7 +111,7 @@ small{color:#667}
 
 <script>
 /* =========================
-   基本設定
+   系統設定
 ========================= */
 
 const TOPIC='classroom/face-demo-2026/demo01';
@@ -117,12 +126,6 @@ const MODEL_URLS=[
  'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights'
 ];
 
-const MODEL_LIST=[
- {netName:'tinyFaceDetector',label:'人臉偵測模型'},
- {netName:'faceLandmark68Net',label:'人臉特徵點模型'},
- {netName:'faceRecognitionNet',label:'人臉辨識模型'}
-];
-
 const video=document.getElementById('video');
 const canvas=document.getElementById('canvas');
 
@@ -133,17 +136,17 @@ let cameraStream=null;
 let cameraTimer=null;
 let busy=false;
 let lastPublish=0;
-let autoStarted=false;
 let activePeople={};
 
 let deviceId=localStorage.getItem('faceDeviceId');
+
 if(!deviceId){
  deviceId='PHONE-'+Math.random().toString(36).slice(2,10);
  localStorage.setItem('faceDeviceId',deviceId);
 }
 
 /* =========================
-   狀態及紀錄
+   狀態
 ========================= */
 
 function status(id,message){
@@ -162,7 +165,7 @@ function clearLogs(){
 }
 
 /* =========================
-   載入 JS 程式庫
+   載入 face-api.js
 ========================= */
 
 function loadScript(url){
@@ -175,12 +178,12 @@ function loadScript(url){
    if(typeof faceapi!=='undefined'){
     resolve(true);
    }else{
-    reject(new Error('下載完成，但找不到 faceapi'));
+    reject(new Error('找不到 faceapi'));
    }
   };
 
   script.onerror=()=>{
-   reject(new Error('無法下載程式庫：'+url));
+   reject(new Error('下載失敗：'+url));
   };
 
   document.head.appendChild(script);
@@ -188,74 +191,69 @@ function loadScript(url){
 }
 
 async function loadFaceApi(){
- if(typeof faceapi!=='undefined'){
-  status('libStatus','✅ face-api.js 已經載入');
-  return true;
- }
+ if(typeof faceapi!=='undefined')return true;
 
  for(let i=0;i<LIBRARIES.length;i++){
-  const url=LIBRARIES[i];
-
   try{
-   status('libStatus',
-    '正在載入程式庫 '+(i+1)+'/'+LIBRARIES.length);
-
-   await loadScript(url);
-
+   status('libStatus','載入 AI 程式庫 '+(i+1)+'/'+LIBRARIES.length);
+   await loadScript(LIBRARIES[i]);
    status('libStatus','✅ AI 程式庫載入成功');
    return true;
-
-  }catch(error){
-   console.error('程式庫來源失敗：',url,error);
-   status('libStatus',
-    '第一個來源失敗，正在嘗試備用來源...');
+  }catch(e){
+   console.warn(e);
   }
  }
 
- status('libStatus','❌ AI 程式庫無法載入');
+ status('libStatus','❌ AI 程式庫載入失敗');
  return false;
 }
 
 /* =========================
-   載入 AI 模型
-   每個模型分別嘗試備用網址
+   AI 模型載入
 ========================= */
 
-async function loadOneModel(netName,label){
- const net=faceapi.nets[netName];
+async function loadModel(net,label){
  let lastError=null;
 
  for(let i=0;i<MODEL_URLS.length;i++){
-  const url=MODEL_URLS[i];
-
   try{
    status('modelStatus',
-    '正在下載 '+label+'（來源 '+(i+1)+'/'+MODEL_URLS.length+'）');
+    '正在載入 '+label+'，來源 '+(i+1));
 
-   await net.loadFromUri(url);
+   await net.loadFromUri(MODEL_URLS[i]);
 
-   console.log(label+' 載入成功：'+url);
-   status('modelStatus','✅ '+label+' 載入成功');
+   console.log(label+' 載入成功');
    return true;
 
-  }catch(error){
-   console.error(label+' 來源失敗：',url,error);
-   lastError=error;
+  }catch(e){
+   console.error(label+' 下載失敗：',e);
+   lastError=e;
   }
  }
 
- throw new Error(label+' 載入失敗。'+
-  (lastError?.message||'未知錯誤'));
+ throw new Error(label+' 失敗：'+
+  (lastError?.message||'無法下載模型'));
 }
 
 async function loadAllModels(){
- for(const item of MODEL_LIST){
-  await loadOneModel(item.netName,item.label);
- }
+ await loadModel(
+  faceapi.nets.tinyFaceDetector,
+  '人臉偵測模型'
+ );
+
+ await loadModel(
+  faceapi.nets.faceLandmark68Net,
+  '人臉特徵點模型'
+ );
+
+ await loadModel(
+  faceapi.nets.faceRecognitionNet,
+  '人臉辨識模型'
+ );
 
  modelsReady=true;
  status('modelStatus','✅ 三個 AI 模型全部載入成功');
- log('AI 模型全部載入成功');
+ log('AI 模型載入成功');
 }
 
 /* =========================
@@ -264,7 +262,7 @@ async function loadAllModels(){
 
 function connectMQTT(){
  if(typeof mqtt==='undefined'){
-  status('mqttStatus','❌ MQTT 程式庫無法載入');
+  status('mqttStatus','❌ MQTT 程式庫載入失敗');
   return;
  }
 
@@ -280,6 +278,7 @@ function connectMQTT(){
 
  mqttClient.on('connect',()=>{
   status('mqttStatus','✅ MQTT 已連線');
+
   publish({
    type:'phone_status',
    deviceId,
@@ -296,15 +295,13 @@ function connectMQTT(){
   status('mqttStatus','MQTT 離線');
  });
 
- mqttClient.on('error',error=>{
-  status('mqttStatus','MQTT 錯誤：'+error.message);
+ mqttClient.on('error',e=>{
+  status('mqttStatus','MQTT 錯誤：'+e.message);
  });
 }
 
 function publish(data){
- if(!mqttClient||!mqttClient.connected){
-  return false;
- }
+ if(!mqttClient||!mqttClient.connected)return false;
 
  mqttClient.publish(TOPIC,JSON.stringify(data));
  return true;
@@ -322,8 +319,7 @@ function loadPeople(){
     descriptors:(p.descriptors||[])
      .map(d=>new Float32Array(d))
    }));
- }catch(error){
-  console.error(error);
+ }catch(e){
   people=[];
  }
  showPeople();
@@ -348,25 +344,24 @@ function showPeople(){
   return;
  }
 
- people.forEach((person,index)=>{
+ people.forEach((p,i)=>{
   const row=document.createElement('div');
   row.className='person';
 
-  const label=document.createElement('span');
-  label.textContent=person.name+
-   '（'+person.descriptors.length+' 張照片）';
+  const name=document.createElement('span');
+  name.textContent=p.name+'（'+p.descriptors.length+' 張照片）';
 
   const btn=document.createElement('button');
   btn.className='red';
   btn.textContent='刪除';
 
   btn.onclick=()=>{
-   people.splice(index,1);
+   people.splice(i,1);
    savePeople();
-   log('已刪除人員：'+person.name);
+   log('刪除人員：'+p.name);
   };
 
-  row.append(label,btn);
+  row.append(name,btn);
   box.append(row);
  });
 }
@@ -375,8 +370,8 @@ async function descriptorFromImage(img){
  const result=await faceapi.detectSingleFace(
   img,
   new faceapi.TinyFaceDetectorOptions({
-   inputSize:416,
-   scoreThreshold:0.35
+   inputSize:608,
+   scoreThreshold:0.15
   })
  ).withFaceLandmarks().withFaceDescriptor();
 
@@ -385,7 +380,7 @@ async function descriptorFromImage(img){
 
 async function registerPerson(){
  if(!modelsReady){
-  alert('請等待 AI 模型載入成功');
+  alert('AI 模型尚未載入完成');
   return;
  }
 
@@ -402,18 +397,15 @@ async function registerPerson(){
  for(const file of files){
   try{
    const img=await faceapi.bufferToImage(file);
-   const descriptor=await descriptorFromImage(img);
-
-   if(descriptor){
-    descriptors.push(descriptor);
-   }
-  }catch(error){
-   console.error(error);
+   const d=await descriptorFromImage(img);
+   if(d)descriptors.push(d);
+  }catch(e){
+   console.error(e);
   }
  }
 
  if(!descriptors.length){
-  alert('照片中沒有偵測到人臉');
+  alert('照片中沒有偵測到人臉，請使用清楚的正面照片');
   return;
  }
 
@@ -426,27 +418,25 @@ async function registerPerson(){
  }
 
  savePeople();
- log('成功登錄：'+name);
+ log('登錄成功：'+name);
  alert('登錄成功：'+name);
 }
 
 /* =========================
-   人臉比對
+   人臉姓名比對
 ========================= */
 
 function identify(descriptor){
  let bestName='未知人員';
  let bestDistance=Infinity;
 
- for(const person of people){
-  for(const known of person.descriptors){
-   const distance=faceapi.euclideanDistance(
-    descriptor,known
-   );
+ for(const p of people){
+  for(const known of p.descriptors){
+   const distance=faceapi.euclideanDistance(descriptor,known);
 
    if(distance<bestDistance){
     bestDistance=distance;
-    bestName=person.name;
+    bestName=p.name;
    }
   }
  }
@@ -464,14 +454,14 @@ function identify(descriptor){
 }
 
 /* =========================
-   畫面外框
+   繪製外框
 ========================= */
 
-function drawFaces(faces,width,height){
- canvas.width=width;
- canvas.height=height;
+function drawFaces(target,faces,width,height){
+ target.width=width;
+ target.height=height;
 
- const ctx=canvas.getContext('2d');
+ const ctx=target.getContext('2d');
  ctx.clearRect(0,0,width,height);
 
  faces.forEach(face=>{
@@ -487,10 +477,10 @@ function drawFaces(faces,width,height){
 
   ctx.font='bold '+Math.max(16,width/35)+'px Arial';
 
-  const textWidth=ctx.measureText(face.name).width;
+  const tw=ctx.measureText(face.name).width;
 
   ctx.fillStyle=face.recognized?'#168b48':'#bd3434';
-  ctx.fillRect(x,Math.max(0,y-30),textWidth+14,28);
+  ctx.fillRect(x,Math.max(0,y-30),tw+14,28);
 
   ctx.fillStyle='white';
   ctx.fillText(face.name,x+7,Math.max(20,y-9));
@@ -498,7 +488,7 @@ function drawFaces(faces,width,height){
 }
 
 /* =========================
-   MQTT 辨識事件
+   發布辨識事件
 ========================= */
 
 function sendEvent(face){
@@ -516,6 +506,10 @@ function sendEvent(face){
 
  log('辨識到：'+face.name);
 }
+
+/* =========================
+   處理人臉偵測結果
+========================= */
 
 function handleDetections(detections){
  const width=video.videoWidth;
@@ -539,6 +533,14 @@ function handleDetections(detections){
   };
  });
 
+ // 顯示所有偵測到的人臉，包含未知人員
+ drawFaces(canvas,faces,width,height);
+
+ status('detectStatus',
+  faces.length>0
+   ? '🟢 已偵測到 '+faces.length+' 張人臉'
+   : '🔍 正在搜尋人臉，請靠近鏡頭');
+
  const seenNow={};
 
  faces.forEach(face=>{
@@ -553,15 +555,14 @@ function handleDetections(detections){
   activePeople[face.name]=now;
  });
 
+ // 離開畫面超過 3 秒，才允許再次記錄
  Object.keys(activePeople).forEach(name=>{
   if(!seenNow[name]&&now-activePeople[name]>3000){
    delete activePeople[name];
   }
  });
 
- drawFaces(faces,width,height);
-
- // 每 500 毫秒傳送最新外框資料
+ // 傳送外框資料給 PC
  if(now-lastPublish>=500){
   publish({
    type:'face_results',
@@ -582,7 +583,7 @@ function handleDetections(detections){
 
 async function recognizePhoto(){
  if(!modelsReady){
-  alert('AI 模型尚未載入成功');
+  alert('AI 模型尚未載入');
   return;
  }
 
@@ -599,8 +600,8 @@ async function recognizePhoto(){
   const detections=await faceapi.detectAllFaces(
    img,
    new faceapi.TinyFaceDetectorOptions({
-    inputSize:416,
-    scoreThreshold:0.35
+    inputSize:608,
+    scoreThreshold:0.15
    })
   ).withFaceLandmarks().withFaceDescriptors();
 
@@ -626,58 +627,34 @@ async function recognizePhoto(){
 
   const stage=document.createElement('div');
   stage.className='stage';
-  stage.style.position='relative';
-
-  img.style.width='100%';
-  img.style.display='block';
 
   const c=document.createElement('canvas');
+  const image=document.createElement('img');
+
+  image.src=img.src;
+  image.style.width='100%';
+  image.style.display='block';
+
   c.style.position='absolute';
-  c.style.inset='0';
+  c.style.left='0';
+  c.style.top='0';
   c.style.width='100%';
   c.style.height='100%';
 
-  stage.append(img,c);
+  stage.append(image,c);
   box.append(stage);
 
-  drawFacesOnCanvas(
-   c,faces,img.naturalWidth,img.naturalHeight
-  );
+  drawFaces(c,faces,img.naturalWidth,img.naturalHeight);
 
-  if(!faces.length){
-   log('照片沒有偵測到人臉');
-   alert('照片中沒有偵測到人臉');
-  }
+  status('detectStatus',
+   '照片辨識完成，找到 '+faces.length+' 張人臉');
 
-  log('照片辨識完成，共 '+faces.length+' 張人臉');
+  log('照片辨識完成：'+faces.length+' 張人臉');
 
- }catch(error){
-  console.error(error);
-  alert('照片辨識失敗：'+error.message);
+ }catch(e){
+  console.error(e);
+  alert('照片辨識失敗：'+e.message);
  }
-}
-
-function drawFacesOnCanvas(c,faces,width,height){
- c.width=width;
- c.height=height;
- const ctx=c.getContext('2d');
-
- faces.forEach(face=>{
-  const b=face.bbox;
-  const x=b.x*width,y=b.y*height;
-  const w=b.width*width,h=b.height*height;
-
-  ctx.strokeStyle=face.recognized?'#00e676':'#ff3333';
-  ctx.lineWidth=Math.max(3,width/250);
-  ctx.strokeRect(x,y,w,h);
-
-  ctx.font='bold '+Math.max(16,width/35)+'px Arial';
-  const tw=ctx.measureText(face.name).width;
-  ctx.fillStyle=face.recognized?'#168b48':'#bd3434';
-  ctx.fillRect(x,Math.max(0,y-30),tw+14,28);
-  ctx.fillStyle='white';
-  ctx.fillText(face.name,x+7,Math.max(20,y-9));
- });
 }
 
 /* =========================
@@ -686,17 +663,11 @@ function drawFacesOnCanvas(c,faces,width,height){
 
 async function startCamera(){
  if(!modelsReady){
-  alert('請先等待 AI 模型載入成功');
+  alert('請等待 AI 模型載入完成');
   return;
  }
 
  if(cameraStream)return;
-
- if(!navigator.mediaDevices||
-    !navigator.mediaDevices.getUserMedia){
-  status('cameraStatus','瀏覽器不支援攝影機，請使用 HTTPS');
-  return;
- }
 
  try{
   status('cameraStatus','正在要求後置鏡頭權限...');
@@ -713,7 +684,10 @@ async function startCamera(){
   video.srcObject=cameraStream;
   await video.play();
 
-  status('cameraStatus','✅ 後置鏡頭已啟動');
+  const track=cameraStream.getVideoTracks()[0];
+  console.log('目前攝影機設定：',track.getSettings());
+
+  status('cameraStatus','✅ 攝影機已開啟');
 
   cameraTimer=setInterval(async()=>{
    if(busy||!video.videoWidth)return;
@@ -721,35 +695,34 @@ async function startCamera(){
    busy=true;
 
    try{
+    const sensitivity=Number(
+     document.getElementById('sensitivity').value
+    );
+
     const detections=await faceapi.detectAllFaces(
      video,
      new faceapi.TinyFaceDetectorOptions({
-      inputSize:416,
-      scoreThreshold:0.35
+      inputSize:608,
+      scoreThreshold:sensitivity
      })
     ).withFaceLandmarks().withFaceDescriptors();
 
     handleDetections(detections);
 
-    status('cameraStatus',
-     '🟢 後置鏡頭運作中｜偵測到 '+detections.length+' 張人臉');
-
-   }catch(error){
-    console.error(error);
-    status('cameraStatus','辨識發生錯誤：'+error.message);
+   }catch(e){
+    console.error('人臉偵測錯誤：',e);
+    status('detectStatus','❌ 偵測錯誤：'+e.message);
    }finally{
     busy=false;
    }
-  },300);
+  },400);
 
-  log('後置鏡頭已開啟');
+  log('後置鏡頭啟動成功');
 
- }catch(error){
+ }catch(e){
   cameraStream=null;
-  status('cameraStatus','❌ 鏡頭啟動失敗：'+error.message);
-  console.error(error);
-
-  alert('無法開啟後置鏡頭。請確認 Safari 相機權限，再按一次開啟。');
+  status('cameraStatus','❌ 鏡頭開啟失敗：'+e.message);
+  alert('無法開啟攝影機，請檢查 Safari 相機權限');
  }
 }
 
@@ -760,7 +733,7 @@ function stopCamera(){
  }
 
  if(cameraStream){
-  cameraStream.getTracks().forEach(track=>track.stop());
+  cameraStream.getTracks().forEach(t=>t.stop());
   cameraStream=null;
  }
 
@@ -771,6 +744,9 @@ function stopCamera(){
  );
 
  status('cameraStatus','攝影機已停止');
+ status('detectStatus','等待攝影機啟動');
+
+ activePeople={};
 
  publish({
   type:'phone_status',
@@ -781,8 +757,15 @@ function stopCamera(){
 }
 
 /* =========================
-   啟動設定
+   滑桿設定
 ========================= */
+
+document.getElementById('sensitivity').addEventListener(
+ 'input',e=>{
+  document.getElementById('sensitivityValue').textContent=
+   Number(e.target.value).toFixed(2);
+ }
+);
 
 document.getElementById('threshold').addEventListener(
  'input',e=>{
@@ -791,30 +774,31 @@ document.getElementById('threshold').addEventListener(
  }
 );
 
+/* =========================
+   啟動系統
+========================= */
+
 connectMQTT();
 loadPeople();
 
 async function initialize(){
- const libraryOK=await loadFaceApi();
+ const ok=await loadFaceApi();
 
- if(!libraryOK)return;
+ if(!ok)return;
 
  try{
   await loadAllModels();
 
-  if(!autoStarted){
-   autoStarted=true;
-   status('cameraStatus','AI 模型完成，準備啟動後置鏡頭...');
+  status('cameraStatus','AI 模型完成，準備開啟後置鏡頭');
 
-   setTimeout(()=>{
-    startCamera();
-   },500);
-  }
+  setTimeout(()=>{
+   startCamera();
+  },500);
 
- }catch(error){
-  console.error('模型載入詳細錯誤：',error);
-  status('modelStatus','❌ '+error.message);
-  log('模型載入失敗：'+error.message);
+ }catch(e){
+  console.error(e);
+  status('modelStatus','❌ '+e.message);
+  log('模型載入失敗：'+e.message);
  }
 }
 
@@ -822,8 +806,9 @@ initialize();
 
 window.addEventListener('pagehide',()=>{
  if(cameraTimer)clearInterval(cameraTimer);
+
  if(cameraStream){
-  cameraStream.getTracks().forEach(track=>track.stop());
+  cameraStream.getTracks().forEach(t=>t.stop());
  }
 });
 </script>
