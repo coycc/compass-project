@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>台灣車牌辨識系統</title>
+<title>台灣車牌自動辨識系統</title>
 
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
@@ -39,30 +39,28 @@ h2 { color:#38bdf8; }
 
 video {
   width:100%;
-  border-radius:10px;
   display:block;
+  border-radius:10px;
 }
 
 #overlay {
   position:absolute;
-  left:0;
   top:0;
+  left:0;
   width:100%;
   height:100%;
   pointer-events:none;
 }
 
 button {
-  padding:12px 15px;
+  padding:13px 20px;
   margin:5px;
   border:0;
   border-radius:8px;
   background:#0284c7;
   color:white;
-  font-size:15px;
+  font-size:16px;
 }
-
-button.stop { background:#dc2626; }
 
 #plate {
   font-size:34px;
@@ -72,13 +70,14 @@ button.stop { background:#dc2626; }
   overflow-wrap:anywhere;
 }
 
-.status {
-  color:#4ade80;
+.small {
+  color:#cbd5e1;
+  font-size:13px;
 }
 
 .sliderBox {
   text-align:left;
-  margin:18px 5px;
+  margin:15px 5px;
 }
 
 input[type=range] {
@@ -87,7 +86,7 @@ input[type=range] {
 
 .sliderValue {
   color:#facc15;
-  font-size:22px;
+  font-size:21px;
   font-weight:bold;
 }
 
@@ -95,21 +94,17 @@ input[type=range] {
   width:100%;
   max-width:450px;
   background:white;
-  border-radius:5px;
 }
 
-.small {
-  color:#cbd5e1;
-  font-size:13px;
-  overflow-wrap:anywhere;
+.status {
+  color:#4ade80;
 }
-
 </style>
 </head>
 
 <body>
 
-<h2>台灣汽車車牌辨識系統</h2>
+<h2>台灣汽車車牌自動辨識系統</h2>
 
 <div class="panel">
   <p>MQTT：<span id="mqttStatus">連線中</span></p>
@@ -118,52 +113,41 @@ input[type=range] {
 </div>
 
 <div class="panel">
-
-  <h3>手機攝影機</h3>
+  <h3>手機即時攝影機</h3>
 
   <div id="videoBox">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlay"></canvas>
   </div>
 
-  <button onclick="startCamera()">開啟後置鏡頭</button>
-  <button class="stop" onclick="stopCamera()">停止鏡頭</button>
-  <button onclick="startRecognition()">開始辨識</button>
-  <button class="stop" onclick="stopRecognition()">停止辨識</button>
+  <button onclick="startCamera()">開啟後置鏡頭（自動辨識）</button>
 
+  <p id="cameraStatus" class="status">尚未開啟鏡頭</p>
+  <p class="small">開啟鏡頭後會自動持續辨識，不需要按其他按鈕。</p>
 </div>
 
 <div class="panel">
-
   <h3>辨識靈敏度設定</h3>
 
   <div class="sliderBox">
     <label>車牌偵測靈敏度</label>
-    <div class="sliderValue" id="sensitivityValue">7</div>
+    <div class="sliderValue" id="sensitivityValue">9</div>
     <input type="range" id="sensitivity"
-      min="1" max="10" step="1" value="7">
-    <p class="small">
-      數值越高，越容易找出較小或不明顯的車牌，
-      但也可能增加誤判。
-    </p>
+      min="1" max="10" value="9">
+    <p class="small">數值越高，會放寬候選車牌的大小和輪廓條件。</p>
   </div>
 
   <div class="sliderBox">
     <label>OCR 最低信心門檻</label>
-    <div class="sliderValue" id="confidenceValue">15%</div>
+    <div class="sliderValue" id="confidenceValue">10%</div>
     <input type="range" id="minConfidence"
-      min="5" max="80" step="5" value="15">
-    <p class="small">
-      數值越低，越容易接受模糊的辨識結果，
-      但錯字機率也會增加。
-    </p>
+      min="5" max="80" step="5" value="10">
+    <p class="small">數值越低越容易接受辨識結果，但錯字也可能增加。</p>
   </div>
-
 </div>
 
 <div class="panel">
-
-  <h3>即時辨識結果</h3>
+  <h3>目前最大車牌</h3>
 
   <div id="plate">等待辨識</div>
 
@@ -171,16 +155,13 @@ input[type=range] {
   <p id="bbox">車牌座標：--</p>
   <p id="area">車牌面積：--</p>
   <p id="candidateCount">候選車牌數：0</p>
-
   <p id="message" class="small">請開啟鏡頭</p>
 
-  <h3>最大車牌裁切預覽</h3>
+  <h3>車牌裁切預覽</h3>
   <canvas id="crop"></canvas>
-
 </div>
 
 <script>
-
 const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
 const TOPIC = "nutc/alpr/demo01/result";
 
@@ -200,19 +181,13 @@ let ocrReady = false;
 let running = false;
 let processing = false;
 let ocrBusy = false;
+let starting = false;
 
+let selectedBox = null;
 let lastOCR = 0;
 let lastPublished = "";
 let lastPublishTime = 0;
-
-let selectedBox = null;
-
-const deviceId =
-  "phone-" + Math.random().toString(36).slice(2,9);
-
-// --------------------------
-// 靈敏度設定
-// --------------------------
+let deviceId = "phone-" + Math.random().toString(36).slice(2,9);
 
 const sensitivity = document.getElementById("sensitivity");
 const minConfidence = document.getElementById("minConfidence");
@@ -227,331 +202,211 @@ minConfidence.oninput = () => {
     minConfidence.value + "%";
 };
 
-// --------------------------
 // MQTT
-// --------------------------
-
 function connectMQTT() {
-
   mqttClient = mqtt.connect(MQTT_URL, {
-    clientId:"ALPR_PHONE_" +
-      Math.random().toString(16).slice(2,10),
+    clientId:"ALPR_PHONE_" + Math.random().toString(16).slice(2,10),
     clean:true,
     connectTimeout:10000,
     reconnectPeriod:3000
   });
 
   mqttClient.on("connect", () => {
-    document.getElementById("mqttStatus").textContent =
-      "已連線";
+    document.getElementById("mqttStatus").textContent = "已連線";
   });
 
   mqttClient.on("reconnect", () => {
-    document.getElementById("mqttStatus").textContent =
-      "重新連線中";
+    document.getElementById("mqttStatus").textContent = "重新連線中";
   });
 
   mqttClient.on("error", err => {
     console.error(err);
-    document.getElementById("mqttStatus").textContent =
-      "連線錯誤";
+    document.getElementById("mqttStatus").textContent = "連線錯誤";
   });
 
   mqttClient.on("close", () => {
-    document.getElementById("mqttStatus").textContent =
-      "未連線";
+    document.getElementById("mqttStatus").textContent = "未連線";
   });
-
 }
 
-// --------------------------
-// OpenCV 載入
-// --------------------------
-
+// OpenCV
 function initOpenCV() {
-
   if (typeof cv === "undefined" || !cv.Mat) {
     setTimeout(initOpenCV,500);
     return;
   }
 
   cvReady = true;
-
-  document.getElementById("cvStatus").textContent =
-    "已載入";
-
+  document.getElementById("cvStatus").textContent = "已載入";
 }
 
-// --------------------------
-// OCR 載入
-// --------------------------
-
+// OCR
 async function initOCR() {
-
   try {
-
     ocrWorker = await Tesseract.createWorker("eng");
 
     await ocrWorker.setParameters({
-      tessedit_char_whitelist:
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-      tessedit_pageseg_mode:
-        Tesseract.PSM.SINGLE_LINE
+      tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+      tessedit_pageseg_mode:Tesseract.PSM.SINGLE_LINE
     });
 
     ocrReady = true;
-
-    document.getElementById("ocrStatus").textContent =
-      "已載入";
+    document.getElementById("ocrStatus").textContent = "已載入";
 
   } catch(err) {
-
     console.error(err);
-
-    document.getElementById("ocrStatus").textContent =
-      "載入失敗";
-
+    document.getElementById("ocrStatus").textContent = "載入失敗";
   }
-
 }
 
-// --------------------------
-// 開啟手機後置鏡頭
-// --------------------------
-
+// 開啟鏡頭，自動開始辨識
 async function startCamera() {
+  if(starting) return;
+  starting = true;
 
   try {
-
     if(cameraStream) {
-      stopCamera();
+      cameraStream.getTracks().forEach(t => t.stop());
     }
 
-    cameraStream =
-      await navigator.mediaDevices.getUserMedia({
-        audio:false,
-        video:{
-          facingMode:{ideal:"environment"},
-          width:{ideal:1280},
-          height:{ideal:720}
-        }
-      });
+    running = false;
+
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      audio:false,
+      video:{
+        facingMode:{ideal:"environment"},
+        width:{ideal:1280},
+        height:{ideal:720}
+      }
+    });
 
     video.srcObject = cameraStream;
-
     await video.play();
 
     overlay.width = video.videoWidth;
     overlay.height = video.videoHeight;
 
+    document.getElementById("cameraStatus").textContent =
+      "鏡頭已開啟，正在準備辨識";
+
     document.getElementById("message").textContent =
-      "後置鏡頭已開啟";
+      "等待辨識元件載入...";
+
+    await waitForModels();
+
+    running = true;
+
+    document.getElementById("cameraStatus").textContent =
+      "自動辨識中";
+
+    document.getElementById("message").textContent =
+      "正在尋找車牌...";
+
+    processFrame();
 
   } catch(err) {
-
-    alert("鏡頭開啟失敗：" + err.message);
-
+    console.error(err);
+    alert("開啟失敗：" + err.message);
+  } finally {
+    starting = false;
   }
-
 }
 
-// --------------------------
-// 停止鏡頭
-// --------------------------
-
-function stopCamera() {
-
-  stopRecognition();
-
-  if(cameraStream) {
-
-    cameraStream.getTracks().forEach(track => {
-      track.stop();
-    });
-
-    cameraStream = null;
-
+async function waitForModels() {
+  while(!cvReady || !ocrReady) {
+    if(!cameraStream) throw new Error("鏡頭已停止");
+    await new Promise(resolve => setTimeout(resolve,300));
   }
-
-  video.srcObject = null;
-
-  ctx.clearRect(0,0,overlay.width,overlay.height);
-
-  document.getElementById("message").textContent =
-    "鏡頭已停止";
-
 }
 
-// --------------------------
-// 開始辨識
-// --------------------------
-
-function startRecognition() {
-
-  if(!cameraStream) {
-    alert("請先開啟鏡頭");
-    return;
-  }
-
-  if(!cvReady || !ocrReady) {
-    alert("OpenCV 或 OCR 尚未載入完成");
-    return;
-  }
-
-  if(running) return;
-
-  running = true;
-
-  document.getElementById("message").textContent =
-    "正在尋找車牌...";
-
-  processFrame();
-
-}
-
-// --------------------------
-// 停止辨識
-// --------------------------
-
-function stopRecognition() {
-
-  running = false;
-
-  document.getElementById("message").textContent =
-    "辨識已停止";
-
-}
-
-// --------------------------
-// 持續掃描
-// --------------------------
-
+// 自動掃描
 async function processFrame() {
-
   if(!running || processing) return;
 
   processing = true;
 
   try {
-
     if(video.readyState >= 2) {
       detectPlate();
     }
-
   } catch(err) {
-
     console.error(err);
-
     document.getElementById("message").textContent =
       "影像處理錯誤：" + err.message;
-
   } finally {
-
     processing = false;
 
     if(running) {
-      setTimeout(processFrame,500);
+      setTimeout(processFrame,350);
     }
-
   }
-
 }
 
-// --------------------------
-// 車牌定位
-// --------------------------
-
+// 車牌偵測：水平邊緣 + 閉運算
 function detectPlate() {
-
   const src = cv.imread(video);
-
   const gray = new cv.Mat();
-  const blurred = new cv.Mat();
-  const edges = new cv.Mat();
+  const blur = new cv.Mat();
+  const grad = new cv.Mat();
+  const absGrad = new cv.Mat();
+  const binary = new cv.Mat();
+  const closed = new cv.Mat();
   const contours = new cv.MatVector();
   const hierarchy = new cv.Mat();
 
   let kernel = null;
+  let best = null;
+  let candidates = [];
 
   try {
-
     const level = Number(sensitivity.value);
+    const totalArea = src.cols * src.rows;
 
-    // 靈敏度越高，Canny 門檻越低
-    const lowThreshold = 110 - level * 9;
-    const highThreshold = 250 - level * 17;
+    cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray,blur,new cv.Size(5,5),0);
 
-    // 靈敏度越高，允許更小的候選區域
-    const minAreaRatio = 0.006 - level * 0.00048;
+    // 強化水平邊緣
+    cv.Sobel(blur,grad,cv.CV_16S,1,0,3);
+    cv.convertScaleAbs(grad,absGrad);
 
-    const minWidth = 95 - level * 5;
-
-    cv.cvtColor(
-      src,gray,cv.COLOR_RGBA2GRAY
+    // 自動閾值
+    cv.threshold(
+      absGrad,binary,0,255,
+      cv.THRESH_BINARY | cv.THRESH_OTSU
     );
 
-    cv.GaussianBlur(
-      gray,blurred,new cv.Size(5,5),0
-    );
-
-    cv.Canny(
-      blurred,
-      edges,
-      lowThreshold,
-      highThreshold
-    );
-
-    const kernelSize = level >= 7 ? 5 : 3;
-
+    // 連接車牌字元的水平邊緣
     kernel = cv.getStructuringElement(
       cv.MORPH_RECT,
-      new cv.Size(kernelSize,3)
+      new cv.Size(17,3)
     );
 
     cv.morphologyEx(
-      edges,
-      edges,
-      cv.MORPH_CLOSE,
-      kernel
+      binary,closed,cv.MORPH_CLOSE,kernel
     );
 
     cv.findContours(
-      edges,
-      contours,
-      hierarchy,
-      cv.RETR_LIST,
-      cv.CHAIN_APPROX_SIMPLE
+      closed,contours,hierarchy,
+      cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE
     );
 
-    let candidates = [];
-    let best = null;
-
-    const totalArea = src.cols * src.rows;
+    const minAreaRatio = 0.0007 + (10-level)*0.00012;
+    const minWidth = 55 + (10-level)*4;
 
     for(let i=0;i<contours.size();i++) {
-
       const contour = contours.get(i);
-
       const rect = cv.boundingRect(contour);
 
-      const contourArea = cv.contourArea(contour);
-
       const area = rect.width * rect.height;
+      const ratio = rect.width / Math.max(rect.height,1);
 
-      const ratio = rect.width / rect.height;
-
-      const fillRate = contourArea / Math.max(area,1);
-
-      const valid =
+      if(
         area > totalArea * minAreaRatio &&
         rect.width >= minWidth &&
-        rect.height >= 20 &&
-        ratio >= 1.8 &&
-        ratio <= 6.5 &&
-        fillRate >= 0.12;
-
-      if(valid) {
-
+        rect.height >= 16 &&
+        ratio >= 1.7 &&
+        ratio <= 7.0
+      ) {
         candidates.push({
           x:rect.x,
           y:rect.y,
@@ -559,87 +414,60 @@ function detectPlate() {
           height:rect.height,
           area:area
         });
-
       }
 
       contour.delete();
-
     }
 
-    // 選出面積最大的候選車牌
     candidates.sort((a,b) => b.area-a.area);
 
-    best = candidates.length ? candidates[0] : null;
+    // 移除高度重疊的重複框
+    candidates = removeDuplicateBoxes(candidates);
 
-    ctx.clearRect(
-      0,0,overlay.width,overlay.height
-    );
+    ctx.clearRect(0,0,overlay.width,overlay.height);
 
-    // 所有候選框：綠色
+    // 所有候選框綠色
     ctx.strokeStyle = "#00ff88";
     ctx.lineWidth = 3;
 
     candidates.forEach(p => {
-
-      ctx.strokeRect(
-        p.x,p.y,p.width,p.height
-      );
-
+      ctx.strokeRect(p.x,p.y,p.width,p.height);
     });
 
     document.getElementById("candidateCount").textContent =
       "候選車牌數：" + candidates.length;
 
-    if(!best) {
-
-      selectedBox = null;
-
+    if(candidates.length === 0) {
       document.getElementById("message").textContent =
-        "尚未找到車牌，請調高靈敏度或靠近車牌";
-
+        "尚未找到候選車牌，請靠近車牌或調高靈敏度";
       return;
-
     }
 
+    best = candidates[0];
     selectedBox = best;
 
-    // 最大車牌：黃色
+    // 最大車牌黃色
     ctx.strokeStyle = "#ffff00";
-    ctx.lineWidth = 6;
+    ctx.lineWidth = 5;
+    ctx.strokeRect(best.x,best.y,best.width,best.height);
 
-    ctx.strokeRect(
-      best.x,best.y,best.width,best.height
-    );
+    // 擴大裁切
+    const px = Math.round(best.width*0.10);
+    const py = Math.round(best.height*0.22);
 
-    // 擴大裁切範圍
-    const padX = Math.round(best.width * 0.08);
-    const padY = Math.round(best.height * 0.18);
+    const x = Math.max(0,best.x-px);
+    const y = Math.max(0,best.y-py);
+    const w = Math.min(src.cols-x,best.width+px*2);
+    const h = Math.min(src.rows-y,best.height+py*2);
 
-    const x = Math.max(0,best.x-padX);
-    const y = Math.max(0,best.y-padY);
-
-    const w = Math.min(
-      src.cols-x,
-      best.width+padX*2
-    );
-
-    const h = Math.min(
-      src.rows-y,
-      best.height+padY*2
-    );
-
-    // 直接裁切原始影像
     cropCanvas.width = Math.max(1,w*3);
     cropCanvas.height = Math.max(1,h*3);
 
     cropCtx.fillStyle = "white";
-    cropCtx.fillRect(
-      0,0,cropCanvas.width,cropCanvas.height
-    );
+    cropCtx.fillRect(0,0,cropCanvas.width,cropCanvas.height);
 
     cropCtx.drawImage(
-      video,
-      x,y,w,h,
+      video,x,y,w,h,
       0,0,cropCanvas.width,cropCanvas.height
     );
 
@@ -650,88 +478,125 @@ function detectPlate() {
       "車牌面積：" + best.area + " px²";
 
     document.getElementById("message").textContent =
-      "已找到最大候選車牌，準備 OCR";
+      "已找到最大候選區域，正在辨識文字";
 
-    // 每 1.5 秒 OCR 一次
-    if(Date.now()-lastOCR > 1500 && !ocrBusy) {
+    if(Date.now()-lastOCR > 1200 && !ocrBusy) {
       lastOCR = Date.now();
       recognizePlate();
     }
 
   } finally {
-
     src.delete();
     gray.delete();
-    blurred.delete();
-    edges.delete();
+    blur.delete();
+    grad.delete();
+    absGrad.delete();
+    binary.delete();
+    closed.delete();
     contours.delete();
     hierarchy.delete();
 
     if(kernel) kernel.delete();
-
   }
-
 }
 
-// --------------------------
-// OCR 辨識
-// --------------------------
+// 移除重疊框
+function removeDuplicateBoxes(boxes) {
+  const result = [];
 
+  for(const box of boxes) {
+    const duplicate = result.some(other => {
+      const cx = Math.max(
+        0,
+        Math.min(box.x+box.width,other.x+other.width) -
+        Math.max(box.x,other.x)
+      );
+
+      const cy = Math.max(
+        0,
+        Math.min(box.y+box.height,other.y+other.height) -
+        Math.max(box.y,other.y)
+      );
+
+      const intersection = cx*cy;
+      const smaller = Math.min(box.area,other.area);
+
+      return smaller > 0 && intersection/smaller > 0.65;
+    });
+
+    if(!duplicate) result.push(box);
+  }
+
+  return result;
+}
+
+// OCR 前處理
+function prepareOCR(canvas) {
+  const out = document.createElement("canvas");
+  out.width = canvas.width;
+  out.height = canvas.height;
+
+  const c = out.getContext("2d");
+  c.drawImage(canvas,0,0);
+
+  const img = c.getImageData(0,0,out.width,out.height);
+  const pixels = img.data;
+
+  for(let i=0;i<pixels.length;i+=4) {
+    const gray =
+      0.299*pixels[i] +
+      0.587*pixels[i+1] +
+      0.114*pixels[i+2];
+
+    const value = Math.max(0,Math.min(255,(gray-128)*1.5+128));
+
+    pixels[i] = value;
+    pixels[i+1] = value;
+    pixels[i+2] = value;
+  }
+
+  c.putImageData(img,0,0);
+  return out;
+}
+
+// OCR
 async function recognizePlate() {
-
-  if(!ocrReady || ocrBusy) return;
+  if(!ocrReady || ocrBusy || !selectedBox) return;
 
   ocrBusy = true;
 
   try {
-
-    // 固定本次裁切影像，避免掃描時畫面改變
-    const snapshot = document.createElement("canvas");
-
-    snapshot.width = cropCanvas.width;
-    snapshot.height = cropCanvas.height;
-
-    snapshot.getContext("2d").drawImage(
-      cropCanvas,0,0
-    );
+    const snapshot = prepareOCR(cropCanvas);
 
     const result = await ocrWorker.recognize(snapshot);
 
-    let text = result.data.text
+    const text = result.data.text
       .toUpperCase()
       .replace(/[^A-Z0-9]/g,"");
 
-    const confidence =
-      Number(result.data.confidence || 0);
+    const confidence = Number(result.data.confidence || 0);
 
     document.getElementById("confidence").textContent =
       "OCR 信心分數：" + confidence.toFixed(1) + "%";
 
     if(text.length < 5 || text.length > 8) {
-
       document.getElementById("plate").textContent =
-        text || "辨識中";
+        text || "尚未辨識出文字";
 
       document.getElementById("message").textContent =
-        "找到車牌，但文字不完整，持續辨識中";
+        "有找到候選區域，但文字不完整，繼續掃描";
 
       return;
-
     }
 
-    // 顯示原始 OCR 結果，不因格式不符而直接丟棄
-    document.getElementById("plate").textContent =
-      text;
+    document.getElementById("plate").textContent = text;
 
     const threshold = Number(minConfidence.value);
 
     if(confidence < threshold) {
-
       document.getElementById("message").textContent =
-        "辨識信心不足，可以降低 OCR 門檻";
-
+        "文字已讀取，但信心分數低於設定門檻";
       return;
-
     }
 
     const validFormat =
@@ -742,72 +607,43 @@ async function recognizePlate() {
     document.getElementById("message").textContent =
       validFormat
       ? "辨識完成，已傳送到電腦"
-      : "已取得文字，格式尚未確認";
+      : "已讀取文字，車牌格式尚未確認";
 
     publishResult(text,confidence,validFormat);
 
   } catch(err) {
-
     console.error(err);
-
-    document.getElementById("message").textContent =
-      "OCR 發生錯誤";
-
+    document.getElementById("message").textContent = "OCR 辨識錯誤";
   } finally {
-
     ocrBusy = false;
-
   }
-
 }
 
-// --------------------------
-// 傳送 MQTT
-// --------------------------
-
+// MQTT 傳送
 function publishResult(plate,confidence,validFormat) {
-
-  if(!mqttClient || !mqttClient.connected) {
-    document.getElementById("message").textContent =
-      "OCR 完成，但 MQTT 尚未連線";
-    return;
-  }
+  if(!mqttClient || !mqttClient.connected || !selectedBox) return;
 
   const now = Date.now();
 
-  if(
-    plate === lastPublished &&
-    now-lastPublishTime < 2000
-  ) return;
+  if(plate === lastPublished && now-lastPublishTime < 2000) return;
 
   lastPublished = plate;
   lastPublishTime = now;
 
   const data = {
-
     type:"plate",
-
     plate:plate,
-
     confidence:Number(confidence.toFixed(1)),
-
     validFormat:validFormat,
-
-    bbox:selectedBox ? {
+    bbox:{
       x:selectedBox.x,
       y:selectedBox.y,
       width:selectedBox.width,
       height:selectedBox.height
-    } : null,
-
-    area:selectedBox ? selectedBox.area : 0,
-
-    sensitivity:Number(sensitivity.value),
-
+    },
+    area:selectedBox.area,
     deviceId:deviceId,
-
     time:new Date().toISOString()
-
   };
 
   mqttClient.publish(
@@ -815,24 +651,16 @@ function publishResult(plate,confidence,validFormat) {
     JSON.stringify(data),
     {qos:0},
     err => {
-      if(err) {
-        document.getElementById("message").textContent =
-          "MQTT 傳送失敗";
-      }
+      if(err) console.error("MQTT 傳送錯誤",err);
     }
   );
-
 }
 
-// --------------------------
 // 啟動
-// --------------------------
-
 connectMQTT();
 initOpenCV();
 initOCR();
 
 </script>
-
 </body>
 </html>
