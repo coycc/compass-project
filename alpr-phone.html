@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>台灣車牌即時辨識</title>
+<title>台灣車牌即時辨識系統</title>
 
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
@@ -32,20 +32,22 @@ input[type=range]{width:100%}
 
 <div class="panel">
 <button id="startBtn">開啟後置鏡頭並開始辨識</button>
-<div class="small" style="margin-top:9px">請將手機對準電腦螢幕上的汽車照片。</div>
+<div class="small" style="margin-top:9px">
+請將手機對準電腦螢幕上的汽車照片，讓車牌盡量放大、清楚。
+</div>
 
 <div class="camera" style="margin-top:12px">
 <video id="video" autoplay playsinline muted></video>
 <canvas id="overlay"></canvas>
 </div>
-
 <div class="status" id="status">等待開啟鏡頭</div>
 </div>
 
 <div class="panel">
 <b>偵測靈敏度：<span id="sensitivityText">7</span></b>
 <input id="sensitivity" type="range" min="1" max="10" value="7">
-
+<div class="small">提高靈敏度會增加候選區域，也可能增加誤判。</div>
+<br>
 <b>OCR 信心門檻：<span id="confidenceText">25</span>%</b>
 <input id="confidence" type="range" min="5" max="90" value="25">
 </div>
@@ -67,14 +69,22 @@ input[type=range]{width:100%}
 <div id="history" class="small">尚無紀錄</div>
 </div>
 
-<!-- 固定 OCR Canvas -->
+<!-- OpenCV 專用畫面 Canvas -->
+<canvas id="frameCanvas" style="display:none"></canvas>
+
+<!-- OCR 專用 Canvas -->
 <canvas id="ocrCanvas" width="1000" height="300" style="display:none"></canvas>
 
 <script>
 const TOPIC="nutc/alpr/demo01/result";
+
 const video=document.getElementById("video");
 const overlay=document.getElementById("overlay");
 const ctx=overlay.getContext("2d");
+
+const frameCanvas=document.getElementById("frameCanvas");
+const frameCtx=frameCanvas.getContext("2d");
+
 const ocrCanvas=document.getElementById("ocrCanvas");
 const ocrCtx=ocrCanvas.getContext("2d");
 
@@ -87,16 +97,23 @@ let cameraStream=null;
 let ocrWorker=null;
 let scanning=false;
 let busy=false;
-let cvReady=false;
 let mqttClient=null;
 let sentRecently=new Map();
 let deviceId="PHONE-"+Math.random().toString(36).slice(2,8).toUpperCase();
+let scanTimer=null;
 
-function status(t){statusBox.textContent=t;}
+function status(t){
+  statusBox.textContent=t;
+}
 
-sensitivity.oninput=()=>document.getElementById("sensitivityText").textContent=sensitivity.value;
-confidence.oninput=()=>document.getElementById("confidenceText").textContent=confidence.value;
+sensitivity.oninput=()=>{
+  document.getElementById("sensitivityText").textContent=sensitivity.value;
+};
+confidence.oninput=()=>{
+  document.getElementById("confidenceText").textContent=confidence.value;
+};
 
+// MQTT
 function connectMQTT(){
   mqttClient=mqtt.connect("wss://broker.hivemq.com:8884/mqtt",{
     clientId:"alpr_phone_"+Math.random().toString(16).slice(2,10),
@@ -108,32 +125,38 @@ function connectMQTT(){
   mqttClient.on("connect",()=>{
     document.getElementById("mqttStatus").textContent="MQTT：已連線";
   });
+
   mqttClient.on("reconnect",()=>{
     document.getElementById("mqttStatus").textContent="MQTT：重新連線中";
   });
+
   mqttClient.on("error",()=>{
     document.getElementById("mqttStatus").textContent="MQTT：連線錯誤";
   });
 }
 connectMQTT();
 
+// 等待 OpenCV 載入
 function waitForOpenCV(){
   return new Promise((resolve,reject)=>{
     let tries=0;
     const timer=setInterval(()=>{
       tries++;
-      if(window.cv && cv.Mat){
+
+      if(window.cv && cv.Mat && cv.imread){
         clearInterval(timer);
         resolve();
       }
+
       if(tries>120){
         clearInterval(timer);
-        reject(new Error("OpenCV 載入逾時"));
+        reject(new Error("OpenCV 載入逾時，請檢查網路"));
       }
     },500);
   });
 }
 
+// 車牌文字格式
 function normalize(s){
   return (s||"").toUpperCase()
     .replace(/[ＯΟ]/g,"0")
@@ -145,6 +168,7 @@ function normalize(s){
 
 function extractPlate(text){
   const t=normalize(text);
+
   const patterns=[
     /[A-Z]{3}[0-9]{4}/g,
     /[A-Z]{2}[0-9]{4}/g,
@@ -152,6 +176,7 @@ function extractPlate(text){
     /[A-Z]{2}[0-9]{3,4}/g,
     /[A-Z]{3}[0-9]{3}/g
   ];
+
   for(const p of patterns){
     const m=t.match(p);
     if(m && m.length)return m[0];
@@ -160,25 +185,41 @@ function extractPlate(text){
 }
 
 function overlap(a,b){
-  const x1=Math.max(a.x,b.x),y1=Math.max(a.y,b.y);
+  const x1=Math.max(a.x,b.x);
+  const y1=Math.max(a.y,b.y);
   const x2=Math.min(a.x+a.w,b.x+b.w);
   const y2=Math.min(a.y+a.h,b.y+b.h);
+
   const inter=Math.max(0,x2-x1)*Math.max(0,y2-y1);
   const union=a.w*a.h+b.w*b.h-inter;
+
   return union>0?inter/union:0;
 }
 
 function deduplicate(list){
   list.sort((a,b)=>b.area-a.area);
   const out=[];
+
   for(const item of list){
-    if(!out.some(old=>overlap(old,item)>0.55))out.push(item);
+    if(!out.some(old=>overlap(old,item)>0.55)){
+      out.push(item);
+    }
   }
   return out.slice(0,12);
 }
 
+// 關鍵修正：先將 video 畫到 Canvas，再交給 OpenCV
 function findCandidates(){
-  const src=cv.imread(video);
+  const W=video.videoWidth;
+  const H=video.videoHeight;
+
+  frameCanvas.width=W;
+  frameCanvas.height=H;
+  frameCtx.drawImage(video,0,0,W,H);
+
+  // cv.imread 使用 Canvas，不直接使用 video
+  const src=cv.imread(frameCanvas);
+
   const gray=new cv.Mat();
   const blur=new cv.Mat();
   const grad=new cv.Mat();
@@ -186,19 +227,33 @@ function findCandidates(){
   const closed=new cv.Mat();
   const contours=new cv.MatVector();
   const hierarchy=new cv.Mat();
-  const kernel=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(17,3));
+  const kernel=cv.getStructuringElement(
+    cv.MORPH_RECT,new cv.Size(17,3)
+  );
+
   const found=[];
 
   try{
-    const W=src.cols,H=src.rows,total=W*H;
+    const total=W*H;
     const level=Number(sensitivity.value);
 
     cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
     cv.GaussianBlur(gray,blur,new cv.Size(5,5),0);
+
     cv.Sobel(blur,grad,cv.CV_8U,1,0,3);
-    cv.threshold(grad,thresh,0,255,cv.THRESH_BINARY|cv.THRESH_OTSU);
-    cv.morphologyEx(thresh,closed,cv.MORPH_CLOSE,kernel);
-    cv.findContours(closed,contours,hierarchy,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+    cv.threshold(
+      grad,thresh,0,255,
+      cv.THRESH_BINARY|cv.THRESH_OTSU
+    );
+
+    cv.morphologyEx(
+      thresh,closed,cv.MORPH_CLOSE,kernel
+    );
+
+    cv.findContours(
+      closed,contours,hierarchy,
+      cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE
+    );
 
     const minArea=total*(0.00012+(10-level)*0.000045);
     const minWidth=Math.max(45,W*(0.025+(10-level)*0.003));
@@ -206,29 +261,54 @@ function findCandidates(){
     for(let i=0;i<contours.size();i++){
       const c=contours.get(i);
       const r=cv.boundingRect(c);
+
       const ratio=r.width/Math.max(1,r.height);
       const area=r.width*r.height;
 
-      if(area>=minArea && r.width>=minWidth &&
-         r.height>=12 && ratio>=1.7 && ratio<=7.5){
-        found.push({x:r.x,y:r.y,w:r.width,h:r.height,area});
+      if(
+        area>=minArea &&
+        r.width>=minWidth &&
+        r.height>=12 &&
+        ratio>=1.7 &&
+        ratio<=7.5
+      ){
+        found.push({
+          x:r.x,
+          y:r.y,
+          w:r.width,
+          h:r.height,
+          area
+        });
       }
+
       c.delete();
     }
+
     return deduplicate(found);
+
   }finally{
-    src.delete();gray.delete();blur.delete();grad.delete();
-    thresh.delete();closed.delete();contours.delete();
-    hierarchy.delete();kernel.delete();
+    src.delete();
+    gray.delete();
+    blur.delete();
+    grad.delete();
+    thresh.delete();
+    closed.delete();
+    contours.delete();
+    hierarchy.delete();
+    kernel.delete();
   }
 }
 
+// 顯示綠色候選框
 function drawCandidates(boxes){
-  const W=video.videoWidth,H=video.videoHeight;
+  const W=video.videoWidth;
+  const H=video.videoHeight;
+
   if(overlay.width!==W || overlay.height!==H){
     overlay.width=W;
     overlay.height=H;
   }
+
   ctx.clearRect(0,0,W,H);
   ctx.lineWidth=3;
   ctx.font="bold 18px Arial";
@@ -241,6 +321,7 @@ function drawCandidates(boxes){
   });
 }
 
+// 裁切候選車牌，放進固定 OCR Canvas
 function cropToFixedCanvas(box){
   const padX=Math.round(box.w*0.12);
   const padY=Math.round(box.h*0.25);
@@ -250,14 +331,15 @@ function cropToFixedCanvas(box){
   const right=Math.min(video.videoWidth,box.x+box.w+padX);
   const bottom=Math.min(video.videoHeight,box.y+box.h+padY);
 
-  const w=right-x,h=bottom-y;
+  const w=right-x;
+  const h=bottom-y;
 
-  // 使用固定 OCR Canvas，不建立臨時 Canvas
   ocrCanvas.width=1000;
   ocrCanvas.height=300;
 
   ocrCtx.fillStyle="#ffffff";
   ocrCtx.fillRect(0,0,1000,300);
+
   ocrCtx.imageSmoothingEnabled=true;
   ocrCtx.imageSmoothingQuality="high";
 
@@ -267,16 +349,20 @@ function cropToFixedCanvas(box){
   const dx=(1000-dw)/2;
   const dy=(300-dh)/2;
 
-  ocrCtx.drawImage(video,x,y,w,h,dx,dy,dw,dh);
+  ocrCtx.drawImage(
+    video,x,y,w,h,
+    dx,dy,dw,dh
+  );
 
-  // 提高對比
   const image=ocrCtx.getImageData(0,0,1000,300);
   const d=image.data;
+
   for(let i=0;i<d.length;i+=4){
     const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
     const v=Math.max(0,Math.min(255,(g-125)*1.8+128));
     d[i]=d[i+1]=d[i+2]=v;
   }
+
   ocrCtx.putImageData(image,0,0);
 
   return {x,y,w,h};
@@ -285,14 +371,16 @@ function cropToFixedCanvas(box){
 async function readCandidate(box){
   const cropBox=cropToFixedCanvas(box);
 
-  // 明確傳入固定 Canvas 元素本身
+  // 使用固定 Canvas 元素進行 OCR
   const result=await ocrWorker.recognize(ocrCanvas);
+
   const text=result.data.text||"";
   const plate=extractPlate(text);
 
   if(!plate)return null;
 
   const score=Number(result.data.confidence)||0;
+
   if(score<Number(confidence.value))return null;
 
   return {
@@ -303,11 +391,13 @@ async function readCandidate(box){
   };
 }
 
+// MQTT 發布
 function publish(item){
   if(!mqttClient || !mqttClient.connected)return;
 
   const now=Date.now();
   const old=sentRecently.get(item.plate)||0;
+
   if(now-old<5000)return;
 
   sentRecently.set(item.plate,now);
@@ -331,6 +421,7 @@ function publish(item){
   mqttClient.publish(TOPIC,JSON.stringify(data));
 }
 
+// 顯示辨識結果
 function showResults(items){
   const results=document.getElementById("results");
   results.innerHTML="";
@@ -348,112 +439,46 @@ function showResults(items){
     publish(item);
   });
 
-  const best=items.slice().sort((a,b)=>b.confidence-a.confidence)[0];
+  const best=items.slice().sort(
+    (a,b)=>b.confidence-a.confidence
+  )[0];
+
   document.getElementById("latest").textContent=best.plate;
-  document.getElementById("latestInfo").textContent="信心分數："+best.confidence+"%";
+  document.getElementById("latestInfo").textContent=
+    "信心分數："+best.confidence+"%";
 
   const history=document.getElementById("history");
-  if(history.textContent==="尚無紀錄")history.textContent="";
+
+  if(history.textContent==="尚無紀錄"){
+    history.textContent="";
+  }
 
   items.forEach(item=>{
     const line=document.createElement("div");
-    line.textContent=new Date().toLocaleTimeString()+"　"+item.plate+"　"+item.confidence+"%";
+    line.textContent=
+      new Date().toLocaleTimeString()+
+      "　"+item.plate+
+      "　"+item.confidence+"%";
+
     history.prepend(line);
   });
 
-  while(history.children.length>40)history.removeChild(history.lastChild);
+  while(history.children.length>40){
+    history.removeChild(history.lastChild);
+  }
 }
 
+// 持續掃描
 async function scan(){
-  if(!scanning || busy || !ocrWorker || !cvReady || video.readyState<2)return;
+  if(
+    !scanning ||
+    busy ||
+    !ocrWorker ||
+    !window.cv ||
+    video.readyState<2
+  )return;
 
   busy=true;
+
   try{
-    status("正在尋找車牌候選區域...");
-    const boxes=findCandidates();
-    drawCandidates(boxes);
-
-    status("找到 "+boxes.length+" 個候選區域，正在辨識...");
-
-    const found=[];
-    for(const box of boxes){
-      if(!scanning)break;
-      const item=await readCandidate(box);
-      if(item)found.push(item);
-    }
-
-    const unique=[];
-    for(const item of found){
-      if(!unique.some(old=>old.plate===item.plate || overlap(old.bbox,item.bbox)>0.5)){
-        unique.push(item);
-      }
-    }
-
-    unique.forEach(item=>{
-      ctx.strokeStyle="#ffff00";
-      ctx.lineWidth=5;
-      ctx.strokeRect(item.bbox.x,item.bbox.y,item.bbox.w,item.bbox.h);
-      ctx.fillStyle="#ffff00";
-      ctx.font="bold 22px Arial";
-      ctx.fillText(item.plate,item.bbox.x,Math.max(24,item.bbox.y-8));
-    });
-
-    showResults(unique);
-    status("掃描完成：候選 "+boxes.length+" 個，成功辨識 "+unique.length+" 個");
-  }catch(err){
-    console.error(err);
-    status("辨識錯誤："+(err.message||err));
-  }finally{
-    busy=false;
-  }
-}
-
-async function startCamera(){
-  startBtn.disabled=true;
-  try{
-    status("正在開啟後置鏡頭...");
-
-    cameraStream=await navigator.mediaDevices.getUserMedia({
-      audio:false,
-      video:{
-        facingMode:{ideal:"environment"},
-        width:{ideal:1280},
-        height:{ideal:720}
-      }
-    });
-
-    video.srcObject=cameraStream;
-    await video.play();
-
-    status("正在載入 OpenCV...");
-    await waitForOpenCV();
-    cvReady=true;
-
-    status("正在載入 OCR 模型...");
-    ocrWorker=await Tesseract.createWorker("eng",1,{
-      workerPath:"https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
-      corePath:"https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js",
-      langPath:"https://tessdata.projectnaptha.com/4.0.0"
-    });
-
-    await ocrWorker.setParameters({
-      tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-      tessedit_pageseg_mode:"7"
-    });
-
-    scanning=true;
-    startBtn.textContent="鏡頭已開啟，自動掃描中";
-    status("準備完成，開始掃描！");
-    setInterval(scan,1800);
-
-  }catch(err){
-    console.error(err);
-    status("啟動失敗："+err.message);
-    startBtn.disabled=false;
-  }
-}
-
-startBtn.addEventListener("click",startCamera);
-</script>
-</body>
-</html>
+    status("正在尋找車牌候選區域...
