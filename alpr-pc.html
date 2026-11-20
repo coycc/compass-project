@@ -3,318 +3,143 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>台灣車牌辨識 - 電腦監控端</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>電腦車牌辨識監控</title>
 <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-
 <style>
-body {
-  font-family: Arial, sans-serif;
-  background: #0f172a;
-  color: white;
-  padding: 20px;
-  margin: 0;
-}
-
-h1 {
-  text-align: center;
-  color: #38bdf8;
-}
-
-.panel {
-  background: #1e293b;
-  padding: 20px;
-  border-radius: 12px;
-  margin: 15px auto;
-  max-width: 1000px;
-}
-
-.status {
-  font-size: 18px;
-}
-
-#connection {
-  color: #facc15;
-  font-weight: bold;
-}
-
-#lastPlate {
-  font-size: 48px;
-  color: #facc15;
-  text-align: center;
-  font-weight: bold;
-  letter-spacing: 5px;
-  padding: 20px;
-}
-
-.info {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
-
-.info div {
-  background: #334155;
-  padding: 15px;
-  border-radius: 8px;
-}
-
-.label {
-  color: #94a3b8;
-  font-size: 14px;
-}
-
-.value {
-  font-size: 20px;
-  margin-top: 5px;
-  overflow-wrap: anywhere;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 15px;
-}
-
-th, td {
-  padding: 12px;
-  border-bottom: 1px solid #475569;
-  text-align: center;
-}
-
-th {
-  color: #38bdf8;
-}
-
-tr:hover {
-  background: #334155;
-}
-
-button {
-  padding: 10px 18px;
-  background: #0284c7;
-  color: white;
-  border: 0;
-  border-radius: 8px;
-  cursor: pointer;
-  margin: 5px;
-}
-
-@media(max-width:600px) {
-  .info {
-    grid-template-columns: 1fr;
-  }
-  #lastPlate {
-    font-size: 34px;
-  }
-}
+*{box-sizing:border-box}
+body{margin:0;padding:24px;background:#101820;color:white;font-family:Arial,sans-serif}
+h1{margin-top:0}
+.panel{background:#1d2b36;border-radius:12px;padding:18px;margin-bottom:16px}
+.status{color:#8ee7a1}
+.warn{color:#ffd166}
+.plate{font-size:42px;font-weight:bold;color:#ffe66d;letter-spacing:3px;word-break:break-all}
+.info{font-size:16px;line-height:2;color:#dce6ed}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px;border-bottom:1px solid #45535e;text-align:left}
+th{color:#9bd5ff}
+#history{overflow-x:auto}
 </style>
 </head>
-
 <body>
-
-<h1>台灣車牌即時辨識監控系統</h1>
+<h1>🚘 台灣車牌辨識監控系統</h1>
 
 <div class="panel">
-  <div class="status">
-    MQTT 狀態：
-    <span id="connection">連線中...</span>
-  </div>
-  <p>MQTT Broker：broker.hivemq.com</p>
-  <p>Topic：nutc/alpr/demo01/result</p>
+  MQTT 狀態：<span id="mqttStatus" class="warn">連線中…</span><br>
+  訂閱主題：nutc/alpr/demo01/result
 </div>
 
 <div class="panel">
-  <h2 style="text-align:center">最新辨識結果</h2>
-  <div id="lastPlate">等待手機傳送資料</div>
-
+  <div>最新辨識車牌</div>
+  <div id="plate" class="plate">等待手機辨識…</div>
   <div class="info">
-    <div>
-      <div class="label">OCR 信心分數</div>
-      <div class="value" id="confidence">--</div>
-    </div>
-
-    <div>
-      <div class="label">辨識時間</div>
-      <div class="value" id="time">--</div>
-    </div>
-
-    <div>
-      <div class="label">車牌外框座標</div>
-      <div class="value" id="bbox">--</div>
-    </div>
-
-    <div>
-      <div class="label">車牌面積</div>
-      <div class="value" id="area">--</div>
-    </div>
-
-    <div>
-      <div class="label">手機裝置 ID</div>
-      <div class="value" id="device">--</div>
-    </div>
-
-    <div>
-      <div class="label">累計辨識次數</div>
-      <div class="value" id="count">0</div>
-    </div>
+    信心分數：<span id="confidence">--</span><br>
+    手機設備：<span id="device">--</span><br>
+    辨識時間：<span id="time">--</span><br>
+    車牌框座標：<span id="bbox">--</span><br>
+    原始影像尺寸：<span id="imageSize">--</span>
   </div>
 </div>
 
 <div class="panel">
-  <h2>車牌辨識紀錄</h2>
-
-  <button onclick="clearHistory()">清除紀錄</button>
-
-  <table>
-    <thead>
-      <tr>
-        <th>編號</th>
-        <th>車牌</th>
-        <th>信心分數</th>
-        <th>面積</th>
-        <th>時間</th>
-      </tr>
-    </thead>
-    <tbody id="history">
-      <tr>
-        <td colspan="5">尚無辨識紀錄</td>
-      </tr>
-    </tbody>
-  </table>
+  <h3>辨識紀錄</h3>
+  <div id="history">
+    <table>
+      <thead>
+        <tr>
+          <th>時間</th>
+          <th>車牌</th>
+          <th>信心分數</th>
+          <th>設備</th>
+        </tr>
+      </thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+  </div>
 </div>
 
 <script>
-const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
+const BROKER = "wss://broker.hivemq.com:8884/mqtt";
 const TOPIC = "nutc/alpr/demo01/result";
 
-let mqttClient;
-let totalCount = 0;
-let historyCount = 0;
+const mqttClient = mqtt.connect(BROKER,{
+  clientId:"alpr_pc_"+Math.random().toString(16).slice(2,10),
+  clean:true,
+  connectTimeout:10000,
+  reconnectPeriod:3000
+});
 
-function connectMQTT() {
-  mqttClient = mqtt.connect(MQTT_URL, {
-    clientId: "ALPR_PC_" + Math.random().toString(16).slice(2, 10),
-    clean: true,
-    connectTimeout: 10000,
-    reconnectPeriod: 3000
-  });
+const statusEl = document.getElementById("mqttStatus");
 
-  mqttClient.on("connect", () => {
-    document.getElementById("connection").textContent =
-      "已連線";
-
-    document.getElementById("connection").style.color =
-      "#4ade80";
-
-    mqttClient.subscribe(TOPIC, err => {
-      if (err) {
-        document.getElementById("connection").textContent =
-          "訂閱失敗";
-      } else {
-        console.log("已訂閱：", TOPIC);
-      }
-    });
-  });
-
-  mqttClient.on("message", (topic, payload) => {
-    try {
-      const data = JSON.parse(payload.toString());
-
-      if (data.type !== "plate") return;
-
-      showResult(data);
-
-    } catch (err) {
-      console.error("資料解析錯誤", err);
+mqttClient.on("connect",()=>{
+  statusEl.textContent = "已連線";
+  statusEl.className = "status";
+  mqttClient.subscribe(TOPIC,{qos:0},err=>{
+    if(err) {
+      statusEl.textContent = "訂閱失敗";
+      statusEl.className = "warn";
     }
   });
+});
 
-  mqttClient.on("reconnect", () => {
-    document.getElementById("connection").textContent =
-      "重新連線中...";
-  });
+mqttClient.on("reconnect",()=>{
+  statusEl.textContent = "重新連線中…";
+  statusEl.className = "warn";
+});
 
-  mqttClient.on("error", err => {
-    console.error(err);
-    document.getElementById("connection").textContent =
-      "連線錯誤";
-  });
+mqttClient.on("error",err=>{
+  statusEl.textContent = "連線錯誤："+err.message;
+  statusEl.className = "warn";
+});
 
-  mqttClient.on("close", () => {
-    document.getElementById("connection").textContent =
-      "連線中斷";
-    document.getElementById("connection").style.color =
-      "#f87171";
-  });
-}
+mqttClient.on("message",(topic,payload)=>{
+  try {
+    const data = JSON.parse(payload.toString());
+    if(data.type !== "license_plate") return;
 
-function showResult(data) {
-  totalCount++;
+    document.getElementById("plate").textContent = data.plate || "--";
+    document.getElementById("confidence").textContent =
+      data.confidence != null ? data.confidence+"%" : "--";
+    document.getElementById("device").textContent = data.deviceId || "--";
 
-  document.getElementById("lastPlate").textContent =
-    data.plate || "--";
+    const date = data.time ? new Date(data.time) : new Date();
+    document.getElementById("time").textContent = date.toLocaleString("zh-TW");
 
-  document.getElementById("confidence").textContent =
-    Number(data.confidence || 0).toFixed(1) + "%";
+    if(data.bbox) {
+      const b = data.bbox;
+      document.getElementById("bbox").textContent =
+        `X:${b.x}, Y:${b.y}, 寬:${b.width}, 高:${b.height}`;
+      document.getElementById("imageSize").textContent =
+        `${b.imageWidth} × ${b.imageHeight}`;
+    } else {
+      document.getElementById("bbox").textContent = "--";
+      document.getElementById("imageSize").textContent = "--";
+    }
 
-  document.getElementById("time").textContent =
-    new Date(data.time).toLocaleString("zh-TW");
+    const tr = document.createElement("tr");
+    const values = [
+      date.toLocaleTimeString("zh-TW"),
+      data.plate || "--",
+      data.confidence != null ? data.confidence+"%" : "--",
+      data.deviceId || "--"
+    ];
 
-  const b = data.bbox || {};
+    values.forEach(value=>{
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    });
 
-  document.getElementById("bbox").textContent =
-    `X:${b.x || 0}, Y:${b.y || 0}, W:${b.width || 0}, H:${b.height || 0}`;
+    const body = document.getElementById("historyBody");
+    body.prepend(tr);
 
-  document.getElementById("area").textContent =
-    (data.area || 0) + " px²";
-
-  document.getElementById("device").textContent =
-    data.deviceId || "--";
-
-  document.getElementById("count").textContent =
-    totalCount;
-
-  addHistory(data);
-}
-
-function addHistory(data) {
-  const tbody = document.getElementById("history");
-
-  if (historyCount === 0) {
-    tbody.innerHTML = "";
+    while(body.children.length > 50) {
+      body.removeChild(body.lastChild);
+    }
+  } catch(err) {
+    console.error("資料解析錯誤",err);
   }
-
-  historyCount++;
-
-  const tr = document.createElement("tr");
-
-  const values = [
-    historyCount,
-    data.plate || "--",
-    Number(data.confidence || 0).toFixed(1) + "%",
-    (data.area || 0) + " px²",
-    new Date(data.time).toLocaleTimeString("zh-TW")
-  ];
-
-  values.forEach(value => {
-    const td = document.createElement("td");
-    td.textContent = value;
-    tr.appendChild(td);
-  });
-
-  tbody.insertBefore(tr, tbody.firstChild);
-}
-
-function clearHistory() {
-  document.getElementById("history").innerHTML =
-    '<tr><td colspan="5">尚無辨識紀錄</td></tr>';
-
-  historyCount = 0;
-}
-
-connectMQTT();
+});
 </script>
-
 </body>
 </html>
